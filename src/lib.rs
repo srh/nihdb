@@ -1,3 +1,4 @@
+#[allow(dead_code)]
 mod rihdb {
     use std::collections::Bound as StdBound;
     use std::collections::btree_map::*;
