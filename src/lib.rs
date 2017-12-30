@@ -50,11 +50,11 @@ impl Store {
         return self.memstore.remove(key);
     }
 
-    pub fn get(&mut self, key: &str) -> String {
+    pub fn get(&mut self, key: &str) -> Option<String> {
         if let Some(x) = self.memstore.entries.get(key) {
-            return x.clone();
+            return Some(x.clone());
         }
-        return String::new();
+        return None;
     }
 
     pub fn directional_range(&mut self, interval: Interval<String>, reverse: bool) -> StoreIter {
@@ -91,8 +91,9 @@ mod tests {
     fn putget() {
         let mut kv = Store::new();
         kv.put("foo", "Hey");
-        let x: String = kv.get("foo");
-        assert_eq!("Hey", x);
+        let x: Option<String> = kv.get("foo");
+        assert_eq!(Some("Hey".to_string()), x);
+        assert_eq!(None, kv.get("bar"));
     }
 
     #[test]
@@ -121,11 +122,11 @@ mod tests {
         let mut kv = Store::new();
         kv.put("a", "alpha");
         kv.put("a", "alpha-2");
-        assert_eq!("alpha-2", kv.get("a"));
+        assert_eq!(Some("alpha-2".to_string()), kv.get("a"));
         let inserted: bool = kv.insert("a", "alpha-3");
         assert!(!inserted);
         let overwrote: bool = kv.replace("a", "alpha-4");
         assert!(overwrote);
-        assert_eq!("alpha-4", kv.get("a"));
+        assert_eq!(Some("alpha-4".to_string()), kv.get("a"));
     }
 }
