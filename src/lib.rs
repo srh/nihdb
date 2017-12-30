@@ -1,18 +1,11 @@
 #[allow(dead_code)]
 mod rihdb {
-    use std::collections::Bound as StdBound;
+    use std::collections::Bound;
     use std::collections::btree_map::*;
 
     pub struct Store {
         entries: BTreeMap<String, String>,
         mem_usage: usize,
-    }
-
-    #[derive(Clone)]
-    pub enum Bound<T> {
-        Unbounded,
-        Inclusive(T),
-        Exclusive(T),
     }
 
     #[derive(Clone)]
@@ -96,14 +89,15 @@ mod rihdb {
         }
 
         pub fn next(&mut self, iter: &mut StoreIter) -> Option<(String, String)> {
-            let mut range: Range<String, String> = self.entries.range((convert_bound(&iter.interval.lower), convert_bound(&iter.interval.upper)));
+            // NOTE: Avoid having to clone the bounds.
+            let mut range: Range<String, String> = self.entries.range((iter.interval.lower.clone(), iter.interval.upper.clone()));
             let res = if !iter.reverse { range.next() } else { range.next_back() };
             if let Some((key, value)) = res {
                 // NOTE: It'd be nice not to have to copy the key...
                 if !iter.reverse {
-                    iter.interval.lower = Bound::Exclusive(key.clone());
+                    iter.interval.lower = Bound::Excluded(key.clone());
                 } else {
-                    iter.interval.upper = Bound::Exclusive(key.clone());
+                    iter.interval.upper = Bound::Excluded(key.clone());
                 }
                 return Some((key.clone(), value.clone()));
             } else {
@@ -111,20 +105,12 @@ mod rihdb {
             }
         }
     }
-
-    // NOTE: Avoid having to recopy the String values.
-    fn convert_bound(b: &Bound<String>) -> StdBound<String> {
-        return match b {
-            &Bound::Inclusive(ref x) => StdBound::Included(x.clone()),
-            &Bound::Exclusive(ref x) => StdBound::Excluded(x.clone()),
-            &Bound::Unbounded => StdBound::Unbounded,
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use rihdb::*;
+    use std::collections::Bound;
     #[test]
     fn putget() {
         let mut kv = Store::new();
@@ -140,7 +126,7 @@ mod tests {
         kv.put("b", "beta");
         kv.put("c", "charlie");
         kv.put("d", "delta");
-        let interval = Interval::<String>{lower: Bound::Unbounded, upper: Bound::Exclusive("d".to_string())};
+        let interval = Interval::<String>{lower: Bound::Unbounded, upper: Bound::Excluded("d".to_string())};
         let mut it: StoreIter = kv.range(interval.clone());
         assert_eq!(Some(("a".to_string(), "alpha".to_string())), kv.next(&mut it));
         assert_eq!(Some(("b".to_string(), "beta".to_string())), kv.next(&mut it));
