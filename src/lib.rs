@@ -4,6 +4,10 @@ mod rihdb {
     use std::collections::btree_map::*;
 
     pub struct Store {
+        memstore: MemStore,
+    }
+
+    pub struct MemStore {
         entries: BTreeMap<String, String>,
         mem_usage: usize,
     }
@@ -29,29 +33,9 @@ mod rihdb {
         return val.len() + 8;
     }
 
-    impl Store {
-        pub fn new() -> Store {
-            return Store{entries: BTreeMap::<String, String>::new(), mem_usage: 0};
-        }
-
-        pub fn insert(&mut self, key: &str, val: &str) -> bool {
-            if let Some(_) = self.entries.get(key) {
-                return false;
-            }
-            self.put(key, val);
-            return true;
-        }
-
-        pub fn replace(&mut self, key: &str, val: &str) -> bool {
-            if let Some(_) = self.entries.get(key) {
-                self.put(key, val);
-                return true;
-            }
-            return false;
-        }
-
-        pub fn put(&mut self, key: &str, val: &str) {
-            let k_usage: usize = key_usage(key);
+    impl MemStore {
+        fn set(&mut self, key: &str, val: &str) {
+           let k_usage: usize = key_usage(key);
             let old_usage: usize;
             if let Some(old_value) = self.entries.get(key) {
                 old_usage = k_usage + value_usage(&old_value);
@@ -66,15 +50,51 @@ mod rihdb {
             self.entries.insert(key.to_string(), val.to_string());
         }
 
-        pub fn remove(&mut self, key: &str) -> bool {
-            if let Some(_) = self.entries.remove(key) {
+        fn remove(&mut self, key: &str) -> bool {
+            if let Some(value) = self.entries.remove(key) {
+                let usage: usize = key_usage(key) + value_usage(&value);
+                self.mem_usage -= usage;
                 return true;
             }
             return false;
         }
 
+        pub fn new() -> MemStore {
+            return MemStore{entries: BTreeMap::<String, String>::new(), mem_usage: 0};
+        }
+    }
+
+    impl Store {
+        pub fn new() -> Store {
+            return Store{memstore:MemStore::new()};
+        }
+
+        pub fn insert(&mut self, key: &str, val: &str) -> bool {
+            if let Some(_) = self.memstore.entries.get(key) {
+                return false;
+            }
+            self.put(key, val);
+            return true;
+        }
+
+        pub fn replace(&mut self, key: &str, val: &str) -> bool {
+            if let Some(_) = self.memstore.entries.get(key) {
+                self.put(key, val);
+                return true;
+            }
+            return false;
+        }
+
+        pub fn put(&mut self, key: &str, val: &str) {
+            self.memstore.set(key, val)
+        }
+
+        pub fn remove(&mut self, key: &str) -> bool {
+            return self.memstore.remove(key);
+        }
+
         pub fn get(&mut self, key: &str) -> String {
-            if let Some(x) = self.entries.get(key) {
+            if let Some(x) = self.memstore.entries.get(key) {
                 return x.clone();
             }
             return String::new();
@@ -90,7 +110,7 @@ mod rihdb {
 
         pub fn next(&mut self, iter: &mut StoreIter) -> Option<(String, String)> {
             // NOTE: Avoid having to clone the bounds.
-            let mut range: Range<String, String> = self.entries.range((iter.interval.lower.clone(), iter.interval.upper.clone()));
+            let mut range: Range<String, String> = self.memstore.entries.range((iter.interval.lower.clone(), iter.interval.upper.clone()));
             let res = if !iter.reverse { range.next() } else { range.next_back() };
             if let Some((key, value)) = res {
                 // NOTE: It'd be nice not to have to copy the key...
