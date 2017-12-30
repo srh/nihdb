@@ -4,7 +4,7 @@ use std::collections::Bound;
 use std::collections::btree_map::*;
 
 mod memstore;
-use memstore::MemStore;
+use memstore::*;
 
 pub struct Store {
     memstore: MemStore,
@@ -43,18 +43,30 @@ impl Store {
     }
 
     pub fn put(&mut self, key: &str, val: &str) {
-        self.memstore.set(key, val)
+        self.memstore.apply(key.to_string(), Mutation::Set(val.to_string()));
     }
 
     pub fn remove(&mut self, key: &str) -> bool {
-        return self.memstore.remove(key);
+        match self.memstore.lookup(key) {
+            Some(&Mutation::Set(_)) => {
+                self.memstore.apply(key.to_string(), Mutation::Delete);
+                return true;
+            }
+            _ => {
+                return false;
+            }
+        };
     }
 
     pub fn get(&mut self, key: &str) -> Option<String> {
-        if let Some(x) = self.memstore.entries.get(key) {
-            return Some(x.clone());
-        }
-        return None;
+        match self.memstore.lookup(key) {
+            Some(&Mutation::Set(ref x)) => {
+                return Some(x.clone());
+            }
+            _ => {
+                return None;
+            }
+        };
     }
 
     pub fn directional_range(&mut self, interval: Interval<String>, reverse: bool) -> StoreIter {
@@ -67,19 +79,29 @@ impl Store {
 
     pub fn next(&mut self, iter: &mut StoreIter) -> Option<(String, String)> {
         // NOTE: Avoid having to clone the bounds.
-        let mut range: Range<String, String> = self.memstore.entries.range((iter.interval.lower.clone(), iter.interval.upper.clone()));
+        let mut range: Range<String, Mutation> = self.memstore.entries.range((iter.interval.lower.clone(), iter.interval.upper.clone()));
         let res = if !iter.reverse { range.next() } else { range.next_back() };
-        if let Some((key, value)) = res {
-            // NOTE: It'd be nice not to have to copy the key...
-            if !iter.reverse {
-                iter.interval.lower = Bound::Excluded(key.clone());
+        loop {
+            if let Some((key, value)) = res {
+                match value {
+                    &Mutation::Set(ref x) => {
+                        // NOTE: It'd be nice not to have to copy the key...
+                        if !iter.reverse {
+                            iter.interval.lower = Bound::Excluded(key.clone());
+                        } else {
+                            iter.interval.upper = Bound::Excluded(key.clone());
+                        }
+                        return Some((key.clone(), x.clone()));
+                    }
+                    &Mutation::Delete => {
+                        continue;
+                    }
+                };
             } else {
-                iter.interval.upper = Bound::Excluded(key.clone());
+                return None;
             }
-            return Some((key.clone(), value.clone()));
-        } else {
-            return None;
         }
+ 
     }
 }
 
