@@ -5,6 +5,7 @@ mod rihdb {
 
     pub struct Store {
         entries: BTreeMap<String, String>,
+        mem_usage: usize,
     }
 
     #[derive(Clone)]
@@ -25,13 +26,25 @@ mod rihdb {
         reverse: bool,
     }
 
+    fn key_usage(key: &str) -> usize {
+        // NOTE: Really compute overhead.
+        return key.len() + 8;
+    }
+
+    fn value_usage(val: &str) -> usize {
+        // NOTE: Really compute overhead.
+        return val.len() + 8;
+    }
+
     impl Store {
         pub fn new() -> Store {
-            return Store{entries: BTreeMap::<String, String>::new()};
+            return Store{entries: BTreeMap::<String, String>::new(), mem_usage: 0};
         }
 
         pub fn put(&mut self, key: &str, val: &str) {
+            let usage: usize = key_usage(key) + value_usage(val);
             self.entries.insert(key.to_string(), val.to_string());
+            self.mem_usage += usage;
         }
 
         pub fn get(&mut self, key: &str) -> String {
@@ -106,7 +119,14 @@ mod tests {
         assert_eq!(Some(("c".to_string(), "charlie".to_string())), kv.next(&mut it));
         assert_eq!(Some(("b".to_string(), "beta".to_string())), kv.next(&mut it));
         assert_eq!(Some(("a".to_string(), "alpha".to_string())), kv.next(&mut it));
-        assert_eq!(None, kv.next(&mut it));
-        
+        assert_eq!(None, kv.next(&mut it)); 
+    }
+
+    #[test]
+    fn overwrite() {
+        let mut kv = Store::new();
+        kv.put("a", "alpha");
+        kv.put("a", "alpha-2");
+        assert_eq!("alpha-2", kv.get("a"));
     }
 }
