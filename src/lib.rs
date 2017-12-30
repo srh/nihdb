@@ -41,18 +41,50 @@ mod rihdb {
             return Store{entries: BTreeMap::<String, String>::new(), mem_usage: 0};
         }
 
+        pub fn insert(&mut self, key: &str, val: &str) -> bool {
+            if let Some(_) = self.entries.get(key) {
+                return false;
+            }
+            self.put(key, val);
+            return true;
+        }
+
+        pub fn replace(&mut self, key: &str, val: &str) -> bool {
+            if let Some(_) = self.entries.get(key) {
+                self.put(key, val);
+                return true;
+            }
+            return false;
+        }
+
         pub fn put(&mut self, key: &str, val: &str) {
-            let usage: usize = key_usage(key) + value_usage(val);
+            let k_usage: usize = key_usage(key);
+            let old_usage: usize;
+            if let Some(old_value) = self.entries.get(key) {
+                old_usage = k_usage + value_usage(&old_value);
+            } else {
+                old_usage = 0;
+            }
+
+            let new_usage: usize = k_usage + value_usage(val);
+            // Temporary overflow is OK because it's a usize.
+            // NOTE: Wait, is unsigned overflow OK in Rust, in debug mode?
+            self.mem_usage = (self.mem_usage + new_usage) - old_usage;
             self.entries.insert(key.to_string(), val.to_string());
-            self.mem_usage += usage;
+        }
+
+        pub fn remove(&mut self, key: &str) -> bool {
+            if let Some(_) = self.entries.remove(key) {
+                return true;
+            }
+            return false;
         }
 
         pub fn get(&mut self, key: &str) -> String {
             if let Some(x) = self.entries.get(key) {
                 return x.clone();
-            } else {
-                return String::new();
             }
+            return String::new();
         }
 
         pub fn directional_range(&mut self, interval: Interval<String>, reverse: bool) -> StoreIter {
@@ -128,5 +160,10 @@ mod tests {
         kv.put("a", "alpha");
         kv.put("a", "alpha-2");
         assert_eq!("alpha-2", kv.get("a"));
+        let inserted: bool = kv.insert("a", "alpha-3");
+        assert!(!inserted);
+        let overwrote: bool = kv.replace("a", "alpha-4");
+        assert!(overwrote);
+        assert_eq!("alpha-4", kv.get("a"));
     }
 }
