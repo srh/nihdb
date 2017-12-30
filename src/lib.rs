@@ -1,19 +1,25 @@
 mod rihdb {
-    pub struct Store {
+    use std::collections::btree_map::*;
 
+    pub struct Store {
+        entries: BTreeMap<String, String>,
     }
 
     impl Store {
         pub fn new() -> Store {
-            return Store{};
+            return Store{entries: BTreeMap::<String, String>::new()};
         }
 
         pub fn put(&mut self, key: &str, val: &str) {
-            println!("put '{}', '{}'", key, val);
+            self.entries.insert(key.to_string(), val.to_string());
         }
 
         pub fn get(&mut self, key: &str) -> String {
-            return "Hey".to_string();
+            if let Some(x) = self.entries.get(key) {
+                return x.clone();
+            } else {
+                return String::new();
+            }
         }
     }
 
