@@ -6,12 +6,14 @@ mod rihdb {
         entries: BTreeMap<String, String>,
     }
 
+    #[derive(Clone)]
     pub enum Bound<T> {
         Unbounded,
         Inclusive(T),
         Exclusive(T),
     }
 
+    #[derive(Clone)]
     pub struct Interval<T> {
         pub lower: Bound<T>,
         pub upper: Bound<T>,
@@ -20,7 +22,6 @@ mod rihdb {
     pub struct StoreIter {
         interval: Interval<String>,
         reverse: bool,
-        // TODO What info to have here?
     }
 
     impl Store {
@@ -49,23 +50,23 @@ mod rihdb {
         }
 
         pub fn next(&mut self, iter: &mut StoreIter) -> Option<(String, String)> {
-            if !iter.reverse {
-                let mut range: Range<String, String> = self.entries.range((convert_bound(&iter.interval.lower), convert_bound(&iter.interval.upper)));
-                if let Some((key, value)) = range.next() {
-                    // TODO: It'd be nice not to have to copy the key...
+            let mut range: Range<String, String> = self.entries.range((convert_bound(&iter.interval.lower), convert_bound(&iter.interval.upper)));
+            let res = if !iter.reverse { range.next() } else { range.next_back() };
+            if let Some((key, value)) = res {
+                // NOTE: It'd be nice not to have to copy the key...
+                if !iter.reverse {
                     iter.interval.lower = Bound::Exclusive(key.clone());
-                    return Some((key.clone(), value.clone()));
                 } else {
-                    return None;
+                    iter.interval.upper = Bound::Exclusive(key.clone());
                 }
+                return Some((key.clone(), value.clone()));
             } else {
-                // TODO implement
                 return None;
             }
         }
     }
 
-    // TODO: Avoid having to recopy the String values.
+    // NOTE: Avoid having to recopy the String values.
     fn convert_bound(b: &Bound<String>) -> StdBound<String> {
         return match b {
             &Bound::Inclusive(ref x) => StdBound::Included(x.clone()),
@@ -93,10 +94,18 @@ mod tests {
         kv.put("b", "beta");
         kv.put("c", "charlie");
         kv.put("d", "delta");
-        let mut it: StoreIter = kv.range(Interval::<String>{lower: Bound::Unbounded, upper: Bound::Exclusive("d".to_string())});
+        let interval = Interval::<String>{lower: Bound::Unbounded, upper: Bound::Exclusive("d".to_string())};
+        let mut it: StoreIter = kv.range(interval.clone());
         assert_eq!(Some(("a".to_string(), "alpha".to_string())), kv.next(&mut it));
         assert_eq!(Some(("b".to_string(), "beta".to_string())), kv.next(&mut it));
         assert_eq!(Some(("c".to_string(), "charlie".to_string())), kv.next(&mut it));
         assert_eq!(None, kv.next(&mut it));
+        it = kv.directional_range(interval, true);
+
+        assert_eq!(Some(("c".to_string(), "charlie".to_string())), kv.next(&mut it));
+        assert_eq!(Some(("b".to_string(), "beta".to_string())), kv.next(&mut it));
+        assert_eq!(Some(("a".to_string(), "alpha".to_string())), kv.next(&mut it));
+        assert_eq!(None, kv.next(&mut it));
+        
     }
 }
