@@ -58,6 +58,13 @@ impl Store {
         };
     }
 
+    pub fn exists(&mut self, key: &str) -> bool {
+        if let Some(&Mutation::Set(_)) = self.memstore.lookup(key) {
+            return true;
+        }
+        return false;
+    }
+
     pub fn get(&mut self, key: &str) -> Option<String> {
         match self.memstore.lookup(key) {
             Some(&Mutation::Set(ref x)) => {
@@ -101,7 +108,6 @@ impl Store {
                 return None;
             }
         }
- 
     }
 }
 
@@ -115,7 +121,9 @@ mod tests {
         kv.put("foo", "Hey");
         let x: Option<String> = kv.get("foo");
         assert_eq!(Some("Hey".to_string()), x);
+        assert!(kv.exists("foo"));
         assert_eq!(None, kv.get("bar"));
+        assert!(!kv.exists("bar"));
     }
 
     #[test]
