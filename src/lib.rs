@@ -2,13 +2,26 @@
 
 use std::collections::Bound;
 
+extern crate rand;
+use rand::*;
+
 mod memstore;
 use memstore::*;
+mod disk;
+use disk::*;
+mod toc;
+use toc::*;
+mod error;
+use error::*;
+mod encoding;
 
 pub struct Store {
     // Never empty
     memstores: Vec<MemStore>,
     threshold: usize,
+    directory: String,
+    toc_file: std::fs::File,
+    toc: TOC,
 }
 
 #[derive(Clone)]
@@ -22,52 +35,101 @@ pub struct StoreIter {
 }
 
 impl Store {
-    pub fn new() -> Store {
-        const MEMSTORE_DEFAULT_THRESHOLD: usize = 1000000;
-        return Store::make(MEMSTORE_DEFAULT_THRESHOLD);
+    pub fn create(dir: &str) -> Result<()> {
+        // NOTE: We'll want directory locking and such.
+        // NOTE: Pass errors up
+        println!("Creating dir {}", dir);
+        std::fs::create_dir(dir).expect("create_dir");  // NOTE: Never use expect
+        create_toc(dir).expect("create_toc");
+        return Ok(());
     }
 
-    pub fn make(threshold: usize) -> Store {
+    pub fn open(dir: &str, threshold: usize) -> Result<Store> {
+        // NOTE: Review if we should error upon some of these error cases.
+        // NOTE: Better error handling
+        // NOTE: Clean up optional chaining.
+
+        let (toc_file, toc) = read_toc(dir).expect("read_toc");
+        let mut ms = MemStore::new();
+        for fileno in 0..toc.next_table_number {
+            iterate_table(dir, fileno, &mut |key: String, value: Mutation| {
+                ms.apply(key, value);
+            })?;
+        }
+
+        return Ok(Store::make(threshold, dir.to_string(), toc_file, toc));
+    }
+
+    pub fn make(threshold: usize, directory: String, toc_file: std::fs::File, toc: TOC) -> Store {
+        return Store::make_existing(threshold, directory, toc_file, toc, MemStore::new());
+    }
+
+    fn make_existing(threshold: usize, directory: String, toc_file: std::fs::File, toc: TOC, ms: MemStore) -> Store {
         return Store{
-            memstores: vec![MemStore::new()],
+            memstores: vec![MemStore::new(), ms],
             threshold: threshold,
+
+            directory: directory,
+            toc_file: toc_file,
+            toc: toc,
         }
     }
 
-    pub fn insert(&mut self, key: &str, val: &str) -> bool {
+    pub fn insert(&mut self, key: &str, val: &str) -> Result<bool> {
         if !self.exists(key) {
-            self.put(key, val);
-            return true;
+            self.put(key, val)?;
+            return Ok(true);
         }
-        return false;
+        return Ok(false);
     }
 
-    pub fn replace(&mut self, key: &str, val: &str) -> bool {
+    pub fn replace(&mut self, key: &str, val: &str) -> Result<bool> {
         if self.exists(key) {
-            self.put(key, val);
-            return true;
+            self.put(key, val)?;
+            return Ok(true);
         }
-        return false;
+        return Ok(false);
     }
 
-    pub fn put(&mut self, key: &str, val: &str) {
+    pub fn put(&mut self, key: &str, val: &str) -> Result<()> {
         self.memstores[0].apply(key.to_string(), Mutation::Set(val.to_string()));
-        self.consider_split();
+        return self.consider_split();
     }
 
-    pub fn remove(&mut self, key: &str) -> bool {
+    pub fn remove(&mut self, key: &str) -> Result<bool> {
         if self.exists(key) {
             self.memstores[0].apply(key.to_string(), Mutation::Delete);
-            self.consider_split();
-            return true;
+            self.consider_split()?;
+            return Ok(true);
         }
-        return false;
+        return Ok(false);
     }
 
-    fn consider_split(&mut self) {
-        if self.memstores[0].mem_usage >= self.threshold {
-            self.memstores.insert(0, MemStore::new());
+    pub fn flush(&mut self) -> Result<()> {
+        self.do_flush()?;
+        if self.memstores.len() > 1 {
+            // We move all the entries to the combined memstore's map.
+            // NOTE: Its mem_usage field is inaccurate (albeit unused).
+            let mut ms = self.memstores.remove(0);
+            self.memstores[0].entries.append(&mut ms.entries);
         }
+        self.memstores.insert(0, MemStore::new());
+        return Ok(());
+    }
+
+    fn consider_split(&mut self) -> Result<()> {
+        if self.memstores[0].mem_usage >= self.threshold {
+            self.flush()?;
+        }
+        return Ok(());
+    }
+
+    fn do_flush(&mut self) -> Result<()> {
+        let ms: &MemStore = &self.memstores[0];
+        flush_to_disk(&self.directory, self.toc.next_table_number, &ms)?;
+        self.toc.next_table_number += 1;
+        append_toc(&mut self.toc_file, Entry{next_table_number: self.toc.next_table_number})?;
+        return Ok(());
     }
 
     pub fn exists(&mut self, key: &str) -> bool {
@@ -151,10 +213,59 @@ fn below_upper_bound(x: &str, bound: &Bound<String>) -> bool {
 mod tests {
     use std::collections::Bound;
     use super::*;
+
+    struct TestStore {
+        // In an option so we can drop it before deleting directory.
+        store: Option<Store>,
+        directory: String,
+    }
+
+    fn random_testdir() -> String {
+        let mut rng = rand::thread_rng();
+        let mut x: u32 = rng.gen();
+        let mut ret = "testdir-".to_string();
+        for _ in 0..6 {
+            ret.push(std::char::from_u32(97 + (x % 26)).unwrap());
+            x /= 26;
+        }
+        return ret;
+    }
+
+    impl Drop for TestStore {
+        fn drop(&mut self) {
+            // Cleanup the Store before we delete the directory.
+            self.close();
+            std::fs::remove_dir_all(&self.directory).expect("remove_dir_all");
+        }
+    }
+
+    impl TestStore {
+        fn create() -> TestStore {
+            let dir: String = random_testdir();
+            Store::create(&dir).unwrap();
+            let mut ts = TestStore{store: None, directory: dir};
+            ts.open();
+            return ts;
+        }
+        fn open(&mut self) {
+            assert!(self.store.is_none());
+            let store: Store = Store::open(&self.directory, 100).unwrap();
+            self.store = Some(store);
+        }
+        fn close(&mut self) {
+            assert!(self.store.is_some());
+            self.store.take();
+        }
+        fn kv(&mut self) -> &mut Store {
+            return self.store.as_mut().unwrap();
+        }
+    }
+
     #[test]
     fn putget() {
-        let mut kv = Store::new();
-        kv.put("foo", "Hey");
+        let mut ts = TestStore::create();
+        let kv = ts.kv();
+        kv.put("foo", "Hey").unwrap();
         let x: Option<String> = kv.get("foo");
         assert_eq!(Some("Hey".to_string()), x);
         assert!(kv.exists("foo"));
@@ -164,11 +275,12 @@ mod tests {
 
     #[test]
     fn range() {
-        let mut kv = Store::new();
-        kv.put("a", "alpha");
-        kv.put("b", "beta");
-        kv.put("c", "charlie");
-        kv.put("d", "delta");
+        let mut ts = TestStore::create();
+        let kv = ts.kv();
+        kv.put("a", "alpha").unwrap();
+        kv.put("b", "beta").unwrap();
+        kv.put("c", "charlie").unwrap();
+        kv.put("d", "delta").unwrap();
         let interval = Interval::<String>{lower: Bound::Unbounded, upper: Bound::Excluded("d".to_string())};
         let mut it: StoreIter = kv.range(interval.clone());
         assert_eq!(Some(("a".to_string(), "alpha".to_string())), kv.next(&mut it));
@@ -179,29 +291,32 @@ mod tests {
 
     #[test]
     fn overwrite() {
-        let mut kv = Store::new();
-        kv.put("a", "alpha");
-        kv.put("a", "alpha-2");
+        let mut ts = TestStore::create();
+        let kv = ts.kv();
+
+        kv.put("a", "alpha").unwrap();
+        kv.put("a", "alpha-2").unwrap();
         assert_eq!(Some("alpha-2".to_string()), kv.get("a"));
-        let inserted: bool = kv.insert("a", "alpha-3");
+        let inserted: bool = kv.insert("a", "alpha-3").unwrap();
         assert!(!inserted);
-        let overwrote: bool = kv.replace("a", "alpha-4");
+        let overwrote: bool = kv.replace("a", "alpha-4").unwrap();
         assert!(overwrote);
         assert_eq!(Some("alpha-4".to_string()), kv.get("a"));
     }
 
-    #[test]
-    fn many() {
-        // Adds enough stuff to the store to use multiple MemStores, to test
-        // that we iterate through multiple ones properly.
-        let mut kv = Store::make(100);
+    fn write_basic_kv(ts: &mut TestStore) {
+        let kv = ts.kv();
         for i in 0..102 {
-            kv.put(&i.to_string(), &format!("value-{}", i.to_string()));
+            kv.put(&i.to_string(), &format!("value-{}", i.to_string())).unwrap();
         }
         // Remove one, so that we test Delete entries really do override Set entries.
-        let removed: bool = kv.remove("11");
+        let removed: bool = kv.remove("11").unwrap();
         assert!(removed);
         assert!(1 < kv.memstores.len());
+    }
+
+    fn verify_basic_kv(ts: &mut TestStore) {
+        let kv = ts.kv();
         let interval = Interval::<String>{lower: Bound::Excluded("1".to_string()), upper: Bound::Unbounded};
         let mut it: StoreIter = kv.range(interval.clone());
         assert_eq!(Some(("10".to_string(), "value-10".to_string())), kv.next(&mut it));
@@ -209,5 +324,23 @@ mod tests {
         assert_eq!(Some(("101".to_string(), "value-101".to_string())), kv.next(&mut it));
         assert_eq!(Some(("12".to_string(), "value-12".to_string())), kv.next(&mut it));
         assert_eq!(Some(("13".to_string(), "value-13".to_string())), kv.next(&mut it));
+    }
+
+    #[test]
+    fn many() {
+        let mut ts = TestStore::create();
+        write_basic_kv(&mut ts);
+        verify_basic_kv(&mut ts);
+    }
+
+    #[test]
+    fn disk() {
+        let mut ts = TestStore::create();
+        write_basic_kv(&mut ts);
+        ts.kv().flush();
+        // Remove (and drop) existing store.
+        ts.close();
+        ts.open();
+        verify_basic_kv(&mut ts);
     }
 }
