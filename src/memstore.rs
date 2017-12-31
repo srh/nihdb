@@ -1,4 +1,5 @@
 use std::collections::*;
+use std::collections::btree_map::*;
 
 pub enum Mutation {
     Set(String),
@@ -39,6 +40,15 @@ impl MemStore {
 
     pub fn lookup(&self, key: &str) -> Option<&Mutation> {
         return self.entries.get(key);
+    }
+
+    pub fn lookup_after(&self, bound: &Bound<String>) -> Option<&str> {
+        // NOTE: Avoid having to clone the bound.
+        let mut range: Range<String, Mutation> = self.entries.range((bound.clone(), Bound::Unbounded));
+        if let Some((key, _)) = range.next() {
+            return Some(key);
+        }
+        return None;
     }
 
     pub fn new() -> MemStore {
