@@ -2,6 +2,7 @@
 name = "rihdb"
 version = "0.1.0"
 authors = ["Sam Hughes <sam@samuelhughes.com>"]
+license = AGPL-3.0-only
 
 [dependencies]
 crc = "^1.0.0"
