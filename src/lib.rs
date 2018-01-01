@@ -3,7 +3,6 @@
 use std::collections::Bound;
 
 extern crate rand;
-use rand::*;
 
 mod memstore;
 use memstore::*;
@@ -212,6 +211,8 @@ fn below_upper_bound(x: &str, bound: &Bound<String>) -> bool {
 mod tests {
     use std::collections::Bound;
     use super::*;
+
+    use rand::*;
 
     struct TestStore {
         // In an option so we can drop it before deleting directory.
