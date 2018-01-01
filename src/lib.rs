@@ -38,7 +38,6 @@ impl Store {
     pub fn create(dir: &str) -> Result<()> {
         // NOTE: We'll want directory locking and such.
         // NOTE: Pass errors up
-        println!("Creating dir {}", dir);
         std::fs::create_dir(dir).expect("create_dir");  // NOTE: Never use expect
         create_toc(dir).expect("create_toc");
         return Ok(());
@@ -57,7 +56,7 @@ impl Store {
             })?;
         }
 
-        return Ok(Store::make(threshold, dir.to_string(), toc_file, toc));
+        return Ok(Store::make_existing(threshold, dir.to_string(), toc_file, toc, ms));
     }
 
     pub fn make(threshold: usize, directory: String, toc_file: std::fs::File, toc: TOC) -> Store {
@@ -252,9 +251,8 @@ mod tests {
             let store: Store = Store::open(&self.directory, 100).unwrap();
             self.store = Some(store);
         }
-        fn close(&mut self) {
-            assert!(self.store.is_some());
-            self.store.take();
+        fn close(&mut self) -> Option<()> {
+            return self.store.take().map(|_| ());
         }
         fn kv(&mut self) -> &mut Store {
             return self.store.as_mut().unwrap();
@@ -337,9 +335,9 @@ mod tests {
     fn disk() {
         let mut ts = TestStore::create();
         write_basic_kv(&mut ts);
-        ts.kv().flush();
+        ts.kv().flush().unwrap();
         // Remove (and drop) existing store.
-        ts.close();
+        assert!(ts.close().is_some());
         ts.open();
         verify_basic_kv(&mut ts);
     }

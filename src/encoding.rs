@@ -67,7 +67,7 @@ pub fn decode_u32(v: &[u8], pos: &mut usize) -> Option<u32> {
         n <<= 8;
         n |= v[*pos + i] as u32;
     }
-    *pos += 8;
+    *pos += 4;
     return Some(n);
 }
 
@@ -84,6 +84,30 @@ pub fn decode_str(v: &[u8], pos: &mut usize) -> Option<String> {
     }
     let end_pos = *pos + length;
     let mut buf = Vec::<u8>::new();
-    buf.copy_from_slice(&v[*pos..end_pos]);
+    buf.extend_from_slice(&v[*pos..end_pos]);
+    *pos = end_pos;
     return String::from_utf8(buf).ok();
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn str() {
+        let mut v = Vec::<u8>::new();
+        let text: &str = "this is a test";
+        super::encode_str(&mut v, text);
+        let mut pos: usize = 0;
+        assert_eq!(Some(text.to_string()), super::decode_str(&v, &mut pos));
+        assert_eq!(v.len(), pos);
+    }
+
+    #[test]
+    fn uint() {
+        let mut v = Vec::<u8>::new();
+        let num: u64 = 37;
+        super::encode_uint(&mut v, num);
+        let mut pos: usize = 0;
+        assert_eq!(Some(num), super::decode_uint(&v, &mut pos));
+        assert_eq!(v.len(), pos);
+    }
 }

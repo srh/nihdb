@@ -22,6 +22,7 @@ pub struct TOC {
     pub next_table_number: u64,
 }
 
+#[derive(Debug)]
 pub struct Entry {
     pub next_table_number: u64,
 }
@@ -51,7 +52,7 @@ fn decode_entry(buf: &[u8], pos: &mut usize) -> Option<Entry> {
         return None;
     }
 
-    let next_table_number: u64 = decode_uint(entry_slice, pos)?;
+    let next_table_number: u64 = decode_uint(buf, pos)?;
     if *pos - front != length {
         return None;
     }

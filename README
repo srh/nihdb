@@ -1,1 +1,6 @@
-A work in progress.  Run "cargo test".  One of the tests will fail.
+A work in progress.  Run "cargo test".
+
+Right now this is a _very_ simple key value store library.  All data must fit in
+memory, and all the files are loaded at startup (which could be slow!).  There
+is no history compaction, so disk storage might be proportional to the total
+number of writes you've done.

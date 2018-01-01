@@ -1,6 +1,7 @@
 use std::collections::*;
 use std::collections::btree_map::*;
 
+#[derive(Debug)]
 pub enum Mutation {
     Set(String),
     Delete,
