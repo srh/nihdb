@@ -59,22 +59,35 @@ fn decode_mutation(v: &[u8], pos: &mut usize) -> Option<Mutation> {
     }
 }
 
-pub fn flush_to_disk(dir: &str, table_number: u64, m: &MemStore) -> Result<()> {
+// Returns keys_offset, file_size, smallest key, biggest key.
+pub fn flush_to_disk(dir: &str, table_number: u64, m: &MemStore) -> Result<(u64, u64, String, String)> {
+    assert!(!m.entries.is_empty());
     let mut value_buf: Vec<u8> = Vec::new();
     let mut key_buf: Vec<u8> = Vec::new();
     
+    let mut first_key: Option<&str> = None;
+    let mut last_key: Option<&str> = None;
     for (key, value) in m.entries.iter() {
+        last_key = Some(key);
+        if first_key.is_none() {
+            first_key = last_key;
+        }
         encode_uint(&mut key_buf, value_buf.len() as u64);
         encode_str(&mut key_buf, key);
-        encode_mutation(&mut value_buf, value)
+        encode_mutation(&mut value_buf, value);
     }
-    encode_u64(&mut key_buf, value_buf.len() as u64);
+    let keys_offset = value_buf.len() as u64;
+    encode_u64(&mut key_buf, keys_offset);  // NOTE: Not necessary if in TOC.
     let mut f = std::fs::File::create(format!("{}/{}.tab", dir, table_number))?;
     f.write_all(&value_buf)?;
     f.write_all(&key_buf)?;
     f.flush()?;
     // NOTE: Fsync must happen at some point.
-    return Ok(());
+    return Ok((
+        keys_offset,
+        keys_offset + key_buf.len() as u64,
+        first_key.unwrap().to_string(),
+        last_key.unwrap().to_string()));
 }
 
 pub fn iterate_table(dir: &str, table_number: u64, func: &mut FnMut(String, Mutation) -> ()) -> Result<()> {
@@ -86,6 +99,8 @@ pub fn iterate_table(dir: &str, table_number: u64, func: &mut FnMut(String, Muta
         Err(RihError::new("table too short"))?;
     }
 
+    // NOTE: We don't really need to read the keys_offset from the table file,
+    // because it's in the TOC.
     let keys_end: usize = buf.len() - 8;
     let keys_offset: usize = {
         let mut pos = keys_end;
@@ -111,8 +126,6 @@ pub fn iterate_table(dir: &str, table_number: u64, func: &mut FnMut(String, Muta
         };
         func(key, value);
     }
-
-
 
     return Ok(());
 }

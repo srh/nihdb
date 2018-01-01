@@ -1,4 +1,5 @@
 use std;
+use std::collections::*;
 use std::io::*;
 use encoding::*;
 use std::result::Result;
@@ -18,13 +19,35 @@ extern crate crc;
 
 */
 
+// NOTE: Make these newtypes.
+type TableId = u64;
+type LevelNumber = u64;
+
+// NOTE: We should track size of garbage data in TOC and occasionally rewrite from scratch.
 pub struct TOC {
+    pub table_infos: BTreeMap<TableId, TableInfo>,
+    // NOTE: We'll want levels to be organized by key order.
+    pub level_infos: BTreeMap<LevelNumber, BTreeSet<TableId>>,
     pub next_table_number: u64,
 }
 
 #[derive(Debug)]
 pub struct Entry {
-    pub next_table_number: u64,
+    pub removals: Vec<TableId>,
+    pub additions: Vec<TableInfo>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TableInfo {
+    pub id: TableId,
+    pub level: LevelNumber,
+    // Offset of the keys in the table file
+    pub keys_offset: u64,
+    pub file_size: u64,
+    // The smallest and biggest keys (defining a closed interval) in the file.
+    // (The file must always have at least one key.)
+    pub smallest_key: String,
+    pub biggest_key: String,
 }
 
 fn toc_filename(dir: &str) -> String {
@@ -35,6 +58,73 @@ pub fn create_toc(dir: &str) -> Result<std::fs::File, std::io::Error> {
     let f = std::fs::File::create(toc_filename(dir));
     // Nothing to write yet.
     return f;
+}
+
+fn remove_table(toc: &mut TOC, table_id: TableId) {
+    // NOTE error handling
+    let ti: TableInfo = toc.table_infos.remove(&table_id).expect("TOC table removal");
+    let v: &mut BTreeSet<TableId> = toc.level_infos.get_mut(&ti.level).expect("TOC table removal level");
+    let removed: bool = v.remove(&ti.id);
+    assert!(removed);
+}
+
+fn add_table(toc: &mut TOC, table_info: TableInfo) {
+    let table_id = table_info.id;
+    let level = table_info.level;
+    let inserted: bool = toc.table_infos.insert(table_id, table_info).is_none();
+    assert!(inserted);  // NOTE error handling
+    let set: &mut BTreeSet<u64> = toc.level_infos.entry(level).or_insert_with(|| BTreeSet::<u64>::new());
+    let inserted: bool = set.insert(table_id);
+    assert!(inserted);
+    toc.next_table_number = toc.next_table_number.max(table_id + 1);
+}
+
+fn encode_table_info(v: &mut Vec<u8>, ti: &TableInfo) {
+    encode_uint(v, ti.id);
+    encode_uint(v, ti.level);
+    encode_uint(v, ti.keys_offset);
+    encode_uint(v, ti.file_size);
+    encode_str(v, &ti.smallest_key);
+    encode_str(v, &ti.biggest_key);
+}
+
+fn decode_table_info(buf: &[u8], pos: &mut usize) -> Option<TableInfo> {
+    let id: u64 = decode_uint(&buf, pos)?;
+    let level: u64 = decode_uint(&buf, pos)?;
+    let keys_offset: u64 = decode_uint(&buf, pos)?;
+    let file_size: u64 = decode_uint(&buf, pos)?;
+    let smallest_key: String = decode_str(&buf, pos)?;
+    let biggest_key: String = decode_str(&buf, pos)?;
+    return Some(TableInfo{
+        id: id,
+        level: level,
+        keys_offset: keys_offset,
+        file_size: file_size,
+        smallest_key: smallest_key,
+        biggest_key: biggest_key,
+    });
+}
+
+fn encode_entry(ent: &Entry) -> Vec<u8> {
+    let mut v = Vec::<u8>::new();
+
+    encode_uint(&mut v, ent.removals.len() as u64);
+    for &table in &ent.removals {
+        encode_uint(&mut v, table);
+    }
+
+    encode_uint(&mut v, ent.additions.len() as u64);
+    for ref table_info in &ent.additions {
+        encode_table_info(&mut v, &table_info);
+    }
+
+    let length: usize = v.len();
+    let checksum: u32 = crc::crc32::checksum_castagnoli(&v);
+    let mut ret = Vec::<u8>::new();
+    encode_u64(&mut ret, length as u64);
+    encode_u32(&mut ret, checksum);
+    ret.extend(v);
+    return ret;
 }
 
 fn decode_entry(buf: &[u8], pos: &mut usize) -> Option<Entry> {
@@ -52,23 +142,23 @@ fn decode_entry(buf: &[u8], pos: &mut usize) -> Option<Entry> {
         return None;
     }
 
-    let next_table_number: u64 = decode_uint(buf, pos)?;
+    let num_removals: usize = try_into_size(decode_uint(&buf, pos)?)?;
+    let mut removals = Vec::<TableId>::new();
+    for _ in 0..num_removals {
+        let table: TableId = decode_uint(&buf, pos)?;
+        removals.push(table);
+    }
+
+    let num_additions: usize = try_into_size(decode_uint(&buf, pos)?)?;
+    let mut additions = Vec::<TableInfo>::new();
+    for _ in 0..num_additions {
+        additions.push(decode_table_info(&buf, pos)?);
+    }
+
     if *pos - front != length {
         return None;
     }
-    return Some(Entry{next_table_number: next_table_number});
-}
-
-fn encode_entry(ent: &Entry) -> Vec<u8> {
-    let mut v = Vec::<u8>::new();
-    encode_uint(&mut v, ent.next_table_number);
-    let length: usize = v.len();
-    let checksum: u32 = crc::crc32::checksum_castagnoli(&v);
-    let mut ret = Vec::<u8>::new();
-    encode_u64(&mut ret, length as u64);
-    encode_u32(&mut ret, checksum);
-    ret.extend(v);
-    return ret;
+    return Some(Entry{removals, additions});
 }
 
 pub fn read_toc(dir: &str) -> Option<(std::fs::File, TOC)> {
@@ -77,14 +167,25 @@ pub fn read_toc(dir: &str) -> Option<(std::fs::File, TOC)> {
     let mut buf = Vec::<u8>::new();
     f.read_to_end(&mut buf).expect("read_to_end toc");  // NOTE error handling
 
-    let mut toc = TOC{next_table_number: 0};
+    let mut toc = TOC{
+        table_infos: BTreeMap::new(),
+        level_infos: BTreeMap::new(),
+        next_table_number: 0,
+    };
 
     let mut pos: usize = 0;
     while pos < buf.len() {
         let savepos = pos;
         if let Some(entry) = decode_entry(&buf, &mut pos) {
-            toc.next_table_number = entry.next_table_number;
+            // Process removals first -- maybe we'll remove+add for level-changing logic
+            for table_id in entry.removals {
+                remove_table(&mut toc, table_id);
+            }
+            for addition in entry.additions {
+                add_table(&mut toc, addition);
+            }
         } else {
+            println!("Truncating toc to {}", savepos);
             f.set_len(savepos as u64).expect("read_toc set len");  // NOTE error handling
             return Some((f, toc));
         }

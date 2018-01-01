@@ -124,9 +124,21 @@ impl Store {
 
     fn do_flush(&mut self) -> Result<()> {
         let ms: &MemStore = &self.memstores[0];
-        flush_to_disk(&self.directory, self.toc.next_table_number, &ms)?;
+        if ms.entries.is_empty() {
+            return Ok(());
+        }
+        let table_id = self.toc.next_table_number;
         self.toc.next_table_number += 1;
-        append_toc(&mut self.toc_file, Entry{next_table_number: self.toc.next_table_number})?;
+        let (keys_offset, file_size, smallest, biggest) = flush_to_disk(&self.directory, table_id, &ms)?;
+        let ti = TableInfo{
+            id: table_id,
+            level: 0,
+            keys_offset: keys_offset,
+            file_size: file_size,
+            smallest_key: smallest,
+            biggest_key: biggest,
+        };
+        append_toc(&mut self.toc_file, Entry{additions: vec![ti], removals: vec![]})?;
         return Ok(());
     }
 
