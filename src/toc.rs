@@ -28,7 +28,7 @@ pub struct TOC {
     pub table_infos: BTreeMap<TableId, TableInfo>,
     // NOTE: We'll want levels to be organized by key order.
     pub level_infos: BTreeMap<LevelNumber, BTreeSet<TableId>>,
-    pub next_table_number: u64,
+    pub next_table_id: u64,
 }
 
 #[derive(Debug)]
@@ -76,7 +76,7 @@ fn add_table(toc: &mut TOC, table_info: TableInfo) {
     let set: &mut BTreeSet<u64> = toc.level_infos.entry(level).or_insert_with(|| BTreeSet::<u64>::new());
     let inserted: bool = set.insert(table_id);
     assert!(inserted);
-    toc.next_table_number = toc.next_table_number.max(table_id + 1);
+    toc.next_table_id = toc.next_table_id.max(table_id + 1);
 }
 
 fn encode_table_info(v: &mut Vec<u8>, ti: &TableInfo) {
@@ -170,7 +170,7 @@ pub fn read_toc(dir: &str) -> Option<(std::fs::File, TOC)> {
     let mut toc = TOC{
         table_infos: BTreeMap::new(),
         level_infos: BTreeMap::new(),
-        next_table_number: 0,
+        next_table_id: 0,
     };
 
     let mut pos: usize = 0;

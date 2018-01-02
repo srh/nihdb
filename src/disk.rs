@@ -105,19 +105,19 @@ impl<'a> TableBuilder<'a> {
 }
 
 // Returns keys_offset, file_size, smallest key, biggest key.
-pub fn flush_to_disk<'a>(dir: &str, table_number: u64, m: &'a MemStore) -> Result<(u64, u64, String, String)> {
+pub fn flush_to_disk<'a>(dir: &str, table_id: u64, m: &'a MemStore) -> Result<(u64, u64, String, String)> {
     assert!(!m.entries.is_empty());
     let mut builder = TableBuilder::<'a>::new();
     
     for (key, value) in m.entries.iter() {
         builder.add_mutation(key, value);
     }
-    let mut f = std::fs::File::create(format!("{}/{}.tab", dir, table_number))?;
+    let mut f = std::fs::File::create(format!("{}/{}.tab", dir, table_id))?;
     return builder.finish(&mut f);
 }
 
-pub fn iterate_table(dir: &str, table_number: u64, func: &mut FnMut(String, Mutation) -> ()) -> Result<()> {
-    let mut f: std::fs::File = std::fs::File::open(format!("{}/{}.tab", dir, table_number))?;
+pub fn iterate_table(dir: &str, table_id: u64, func: &mut FnMut(String, Mutation) -> ()) -> Result<()> {
+    let mut f: std::fs::File = std::fs::File::open(format!("{}/{}.tab", dir, table_id))?;
     let mut buf = Vec::<u8>::new();
     f.read_to_end(&mut buf)?;
 

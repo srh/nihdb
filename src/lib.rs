@@ -49,7 +49,7 @@ impl Store {
 
         let (toc_file, toc) = read_toc(dir).expect("read_toc");
         let mut ms = MemStore::new();
-        for fileno in 0..toc.next_table_number {
+        for fileno in 0..toc.next_table_id {
             iterate_table(dir, fileno, &mut |key: String, value: Mutation| {
                 ms.apply(key, value);
             })?;
@@ -127,8 +127,8 @@ impl Store {
         if ms.entries.is_empty() {
             return Ok(());
         }
-        let table_id = self.toc.next_table_number;
-        self.toc.next_table_number += 1;
+        let table_id = self.toc.next_table_id;
+        self.toc.next_table_id += 1;
         let (keys_offset, file_size, smallest, biggest) = flush_to_disk(&self.directory, table_id, &ms)?;
         let ti = TableInfo{
             id: table_id,
