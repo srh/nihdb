@@ -1,7 +1,5 @@
 use std;
 
-pub type Result<T> = std::result::Result<T, Box<std::error::Error>>;
-
 #[derive(Debug)]
 pub struct RihError {
     msg: String,

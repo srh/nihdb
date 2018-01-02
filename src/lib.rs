@@ -1,8 +1,10 @@
 #[allow(dead_code)]
 
 use std::collections::Bound;
+use std::rc::Rc;
 
 extern crate rand;
+extern crate owning_ref;
 
 mod memstore;
 use memstore::*;
@@ -12,6 +14,10 @@ mod toc;
 use toc::*;
 mod error;
 use error::*;
+mod util;
+use util::*;
+mod iter;
+use iter::*;
 mod encoding;
 
 pub struct Store {
@@ -23,14 +29,9 @@ pub struct Store {
     toc: TOC,
 }
 
-#[derive(Clone)]
-pub struct Interval<T> {
-    pub lower: Bound<T>,
-    pub upper: Bound<T>,
-}
-
-pub struct StoreIter {
+pub struct StoreIter<'a> {
     interval: Interval<String>,
+    iters: MergeIterator<'a>,
 }
 
 impl Store {
@@ -107,12 +108,7 @@ impl Store {
 
     pub fn flush(&mut self) -> Result<()> {
         self.do_flush()?;
-        if self.memstores.len() > 1 {
-            // We move all the entries to the combined memstore's map.
-            // NOTE: Its mem_usage field is inaccurate (albeit unused).
-            let mut ms = self.memstores.remove(0);
-            self.memstores[0].entries.append(&mut ms.entries);
-        }
+        let _ = self.memstores.remove(0);
         self.memstores.insert(0, MemStore::new());
         return Ok(());
     }
@@ -140,7 +136,7 @@ impl Store {
             smallest_key: smallest,
             biggest_key: biggest,
         };
-        append_toc(&mut self.toc_file, Entry{additions: vec![ti], removals: vec![]})?;
+        append_toc(&mut self.toc, &mut self.toc_file, Entry{additions: vec![ti], removals: vec![]})?;
         return Ok(());
     }
 
@@ -153,6 +149,30 @@ impl Store {
                 };
             }
         }
+        // NOTE: We're still using a big fat memstore, so we only get to here with keys we
+        // never used.
+        println!("exists processing levels for key {}, num tables = {}", key, self.toc.table_infos.len());
+        for (_level, table_ids) in self.toc.level_infos.iter() {
+            println!("processing level {} for key {}", _level, key);
+            // For level zero, we want to iterate tables in reverse order.
+            for table_id in table_ids.iter().rev() {
+                let ti: &TableInfo = self.toc.table_infos.get(table_id).expect("invalid toc");
+                if key >= &ti.smallest_key && key <= &ti.biggest_key {
+                    // NOTE: We'll want to use exists_table.
+                    let opt_mut = lookup_table(&self.directory, ti, key).unwrap();  // NOTE error handling
+                    if let Some(m) = opt_mut {
+                        return match m {
+                            Mutation::Set(_) => true,
+                            Mutation::Delete => false,
+                        }
+                    }
+                }
+
+            }
+        }
+
+        println!("done processing levels, not found, for key {}", key);
+
         return false;
     }
 
@@ -165,60 +185,87 @@ impl Store {
                 }
             }
         }
+        // NOTE: We're still using a big fat memstore, so we only get to this code with keys we never used.
+        for (_level, table_ids) in self.toc.level_infos.iter() {
+            // For level zero, we want to iterate tables in reverse order.
+            // NOTE: For other levels, we don't want to iterate at all.  Too much CPU.
+            for table_id in table_ids.iter().rev() {
+                let ti: &TableInfo = self.toc.table_infos.get(table_id).expect("invalid toc");
+                if key >= &ti.smallest_key && key <= &ti.biggest_key {
+                    let opt_mut = lookup_table(&self.directory, ti, key).unwrap();  // NOTE error handling
+                    if let Some(m) = opt_mut {
+                        return match m {
+                            Mutation::Set(x) => Some(x),
+                            Mutation::Delete => None,
+                        }
+                    }
+                }
+            }
+        }
+
         return None;
     }
 
-    // NOTE: Add directional ranges (i.e. backwards range iteration).
-    pub fn range(&mut self, interval: Interval<String>) -> StoreIter {
-        return StoreIter{interval: interval}
+    fn add_table_iter_to_iters<'a>(
+        &self, iters: &mut Vec<Box<MutationIterator + 'a>>, table_id: TableId, lower_bound: &Bound<String>)
+        -> Result<()> {
+        let ti: &TableInfo = self.toc.table_infos.get(&table_id).expect("invalid toc");
+        // NOTE: Don't clone the lower bound every freaking time.
+        let interval = Interval::<String>{lower: lower_bound.clone(), upper: Bound::Unbounded};
+        let iter = TableIterator::make(&self.directory, ti, &interval)?;
+        iters.push(Box::new(iter));
+        return Ok(());
     }
 
-    pub fn next(&mut self, iter: &mut StoreIter) -> Option<(String, String)> {
-        loop {
-            let mut i: usize = self.memstores.len();
-            let mut min_key: Option<&str> = None;
-            let mut min_key_index: usize = 0;
-            while i > 0 {
-                i -= 1;
-                if let Some(k_i) = self.memstores[i].lookup_after(&iter.interval.lower) {
-                    if let Some(mk) = min_key {
-                        if k_i <= mk {
-                            min_key = Some(k_i);
-                            min_key_index = i;
-                        }
-                    } else {
-                        min_key = Some(k_i);
-                        min_key_index = i;
-                    }
-                }
-            }
+    // NOTE: Add directional ranges (i.e. backwards range iteration).
+    // NOTE: If the StoreIter keeps self borrowed, it should hold a reference to self that we can use
+    // to iterate.
+    pub fn range<'a>(&'a self, interval: &Interval<String>) -> Result<StoreIter<'a>> {
+        // NOTE: Could short-circuit for empty/one-key interval.
+        let mut iters: Vec<Box<MutationIterator + 'a>> = Vec::new();
+        for store in self.memstores.iter() {
+            iters.push(Box::new(MemStoreIterator::<'a>::make(store, interval)));
+        }
 
-            if let Some(k) = min_key {
-                iter.interval.lower = Bound::Excluded(k.to_string());
-                if !below_upper_bound(k, &iter.interval.upper) {
-                    return None;
+        for (level, table_ids) in self.toc.level_infos.iter() {
+            if *level == 0 {
+                // Tables overlap, add them in reverse order.
+                for table_id in table_ids.iter().rev() {
+                    // NOTE: We could check if the intervals actually overlap.
+                    self.add_table_iter_to_iters(&mut iters, *table_id, &interval.lower)?;
                 }
-                let mutation = self.memstores[min_key_index].lookup(k).unwrap();
+            } else {
+                panic!("Iterating non-zero levels not supported");
+            }
+        }
+
+        return Ok(StoreIter{
+            interval: interval.clone(),
+            iters: MergeIterator::make(iters)?,
+        });
+    }
+
+    pub fn next(&self, iter: &mut StoreIter) -> Result<Option<(String, String)>> {
+        loop {
+            if let Some(key) = iter.iters.current_key()? {
+                if !below_upper_bound(&key, &iter.interval.upper) {
+                    return Ok(None);
+                }
+                let mutation: Mutation = iter.iters.current_value()?.expect("a current_value");
+                iter.iters.step()?;
                 match mutation {
-                    &Mutation::Set(ref value) => {
-                        return Some((k.to_string(), value.clone()));
+                    Mutation::Set(value) => {
+                        return Ok(Some((key, value)));
                     },
-                    &Mutation::Delete => {
+                    Mutation::Delete => {
                         continue;
                     }
-                };
+                }
+            } else {
+                return Ok(None);
             }
-            return None;
         }
     }
-}
-
-fn below_upper_bound(x: &str, bound: &Bound<String>) -> bool {
-    return match bound {
-        &Bound::Excluded(ref s) => x < &s,
-        &Bound::Included(ref s) => x <= &s,
-        &Bound::Unbounded => true,
-    };
 }
 
 #[cfg(test)]
@@ -295,11 +342,11 @@ mod tests {
         kv.put("c", "charlie").unwrap();
         kv.put("d", "delta").unwrap();
         let interval = Interval::<String>{lower: Bound::Unbounded, upper: Bound::Excluded("d".to_string())};
-        let mut it: StoreIter = kv.range(interval.clone());
-        assert_eq!(Some(("a".to_string(), "alpha".to_string())), kv.next(&mut it));
-        assert_eq!(Some(("b".to_string(), "beta".to_string())), kv.next(&mut it));
-        assert_eq!(Some(("c".to_string(), "charlie".to_string())), kv.next(&mut it));
-        assert_eq!(None, kv.next(&mut it));
+        let mut it: StoreIter = kv.range(&interval).expect("range");
+        assert_eq!(Some(("a".to_string(), "alpha".to_string())), kv.next(&mut it).unwrap());
+        assert_eq!(Some(("b".to_string(), "beta".to_string())), kv.next(&mut it).unwrap());
+        assert_eq!(Some(("c".to_string(), "charlie".to_string())), kv.next(&mut it).unwrap());
+        assert_eq!(None, kv.next(&mut it).unwrap());
     }
 
     #[test]
@@ -331,12 +378,12 @@ mod tests {
     fn verify_basic_kv(ts: &mut TestStore) {
         let kv = ts.kv();
         let interval = Interval::<String>{lower: Bound::Excluded("1".to_string()), upper: Bound::Unbounded};
-        let mut it: StoreIter = kv.range(interval.clone());
-        assert_eq!(Some(("10".to_string(), "value-10".to_string())), kv.next(&mut it));
-        assert_eq!(Some(("100".to_string(), "value-100".to_string())), kv.next(&mut it));
-        assert_eq!(Some(("101".to_string(), "value-101".to_string())), kv.next(&mut it));
-        assert_eq!(Some(("12".to_string(), "value-12".to_string())), kv.next(&mut it));
-        assert_eq!(Some(("13".to_string(), "value-13".to_string())), kv.next(&mut it));
+        let mut it: StoreIter = kv.range(&interval).expect("range");
+        assert_eq!(Some(("10".to_string(), "value-10".to_string())), kv.next(&mut it).unwrap());
+        assert_eq!(Some(("100".to_string(), "value-100".to_string())), kv.next(&mut it).unwrap());
+        assert_eq!(Some(("101".to_string(), "value-101".to_string())), kv.next(&mut it).unwrap());
+        assert_eq!(Some(("12".to_string(), "value-12".to_string())), kv.next(&mut it).unwrap());
+        assert_eq!(Some(("13".to_string(), "value-13".to_string())), kv.next(&mut it).unwrap());
     }
 
     #[test]
@@ -355,5 +402,17 @@ mod tests {
         assert!(ts.close().is_some());
         ts.open();
         verify_basic_kv(&mut ts);
+    }
+
+    #[test]
+    fn disk_missing_key() {
+        let mut ts = TestStore::create();
+        write_basic_kv(&mut ts);
+        ts.kv().flush().unwrap();
+        // Remove (and drop) existing store.
+        assert!(ts.close().is_some());
+        ts.open();
+        // This actually hits the disk, because the key has no reference in the memstores.
+        assert_eq!(None, ts.kv().get("bogus"));
     }
 }

@@ -7,3 +7,4 @@ license = "AGPL-3.0-only"
 [dependencies]
 crc = "^1.0.0"
 rand = "0.4"
+owning_ref = "0.3"

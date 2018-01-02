@@ -1,3 +1,5 @@
+use std;
+
 // NOTE: Handle overflow and be generic w.r.t. int types.
 pub fn encode_uint(v: &mut Vec<u8>, mut n: u64) {
     while n >= 128 {
@@ -77,16 +79,20 @@ pub fn encode_str(v: &mut Vec<u8>, n: &str) {
     v.extend_from_slice(b);
 }
 
-pub fn decode_str(v: &[u8], pos: &mut usize) -> Option<String> {
+pub fn observe_str<'a>(v: &'a [u8], pos: &mut usize) -> Option<&'a str> {
     let length: usize = try_into_size(decode_uint(v, pos)?)?;
     if v.len() - *pos < length {
         return None;
     }
     let end_pos = *pos + length;
-    let mut buf = Vec::<u8>::new();
-    buf.extend_from_slice(&v[*pos..end_pos]);
+    let slice = &v[*pos..end_pos];
     *pos = end_pos;
-    return String::from_utf8(buf).ok();
+    return std::str::from_utf8(slice).ok();
+}
+
+pub fn decode_str(v: &[u8], pos: &mut usize) -> Option<String> {
+    let s: &str = observe_str(v, pos)?;
+    return Some(s.to_string());
 }
 
 #[cfg(test)]

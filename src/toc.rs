@@ -20,13 +20,13 @@ extern crate crc;
 */
 
 // NOTE: Make these newtypes.
-type TableId = u64;
-type LevelNumber = u64;
+pub type TableId = u64;
+pub type LevelNumber = u64;
 
 // NOTE: We should track size of garbage data in TOC and occasionally rewrite from scratch.
 pub struct TOC {
     pub table_infos: BTreeMap<TableId, TableInfo>,
-    // NOTE: We'll want levels to be organized by key order.
+    // NOTE: We'll want levels (besides zero) to be organized by key order.
     pub level_infos: BTreeMap<LevelNumber, BTreeSet<TableId>>,
     pub next_table_id: u64,
 }
@@ -161,6 +161,16 @@ fn decode_entry(buf: &[u8], pos: &mut usize) -> Option<Entry> {
     return Some(Entry{removals, additions});
 }
 
+fn process_entry(toc: &mut TOC, entry: Entry) {
+    // Process removals first -- maybe we'll remove+add for level-changing logic
+    for table_id in entry.removals {
+        remove_table(toc, table_id);
+    }
+    for addition in entry.additions {
+        add_table(toc, addition);
+    }
+}
+
 pub fn read_toc(dir: &str) -> Option<(std::fs::File, TOC)> {
     let mut f = std::fs::OpenOptions::new().read(true).append(true)
         .open(toc_filename(dir)).expect("open toc");  // NOTE error handling
@@ -177,13 +187,7 @@ pub fn read_toc(dir: &str) -> Option<(std::fs::File, TOC)> {
     while pos < buf.len() {
         let savepos = pos;
         if let Some(entry) = decode_entry(&buf, &mut pos) {
-            // Process removals first -- maybe we'll remove+add for level-changing logic
-            for table_id in entry.removals {
-                remove_table(&mut toc, table_id);
-            }
-            for addition in entry.additions {
-                add_table(&mut toc, addition);
-            }
+            process_entry(&mut toc, entry);
         } else {
             println!("Truncating toc to {}", savepos);
             f.set_len(savepos as u64).expect("read_toc set len");  // NOTE error handling
@@ -194,8 +198,9 @@ pub fn read_toc(dir: &str) -> Option<(std::fs::File, TOC)> {
     return Some((f, toc));
 }
 
-pub fn append_toc(f: &mut std::fs::File, entry: Entry) -> Result<(), std::io::Error> {
+pub fn append_toc(toc: &mut TOC, f: &mut std::fs::File, entry: Entry) -> Result<(), std::io::Error> {
     let data: Vec<u8> = encode_entry(&entry);
     f.write_all(&data)?;
+    process_entry(toc, entry);
     return Ok(());
 }
