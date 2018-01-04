@@ -112,15 +112,58 @@ impl Store {
         // NOTE: Instead of flushing and compacting, we could, you know, do a
         // flush into the compaction.
         self.flush_and_record(0, &ms)?;
+        self.rebalance()?;
+
+        self.memstores.insert(0, MemStore::new());
+        return Ok(());
+    }
+
+    pub fn rebalance(&mut self) -> Result<()> {
         if self.toc.level_infos.get(&0).map_or(false, |lz| lz.len() > 4) {
             // Do a releveling with all but the latest (highest numbered) table.
             let table_ids: Vec<TableId>
                 = self.toc.level_infos.get(&0).unwrap().iter().rev().skip(1).map(|&x| x).collect();
             self.relevel(0, table_ids)?;
+            // Exit.  Don't do more than one releveling per "rebalance"
+            // operation.  Just to spread the work out, barely.
+            return Ok(());
         }
 
-        self.memstores.insert(0, MemStore::new());
-        return Ok(());
+        let mut to_relevel: Option<(LevelNumber, TableId)> = None;
+        for (&level, table_ids) in self.toc.level_infos.iter().filter(|&(&level, _)| level != 0) {
+            // NOTE: Icky conversion -- change LevelNumber to u32?
+            if table_ids.len() <= 4 * 10usize.pow(level as u32 - 1) {
+                continue;
+            }
+            // Now what?  We want to kick out one table for this level.  The
+            // one which overlaps the fewest child tables.
+            // NOTE: A data structure for this would be nice.
+            let mut smallest_overlap = usize::max_value();
+            let mut smallest_overlap_table_id: TableId = 0;
+
+            for &id in table_ids.iter() {
+                // NOTE: Pass a slice to single TableInfo element without cloning.
+                let infos: [TableInfo; 1]
+                    = [self.toc.table_infos.get(&id).expect("toc valid in rebalance").clone()];
+                // NOTE: Would be nice not to allocate this vec.  Just count number of overlapping.
+                let lower_overlapping_ids: Vec<_> = Store::get_overlapping_tables(&self.toc, &infos, level + 1);
+                let overlap = lower_overlapping_ids.len();
+                // NOTE: We're biased towards releveling left-most tables given equal overlap.
+                if overlap < smallest_overlap {
+                    smallest_overlap = overlap;
+                    smallest_overlap_table_id = id;
+                }
+            }
+
+            assert!(smallest_overlap != usize::max_value());
+            to_relevel = Some((level, smallest_overlap_table_id));
+            break;
+        }
+        if let Some((level, table_id)) = to_relevel {
+            return self.relevel(level, vec![table_id]);
+        } else {
+            return Ok(());
+        }
     }
 
     // 'tables' is in order of precedence, such that frontmost tables supercede
