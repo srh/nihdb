@@ -39,15 +39,6 @@ impl MemStore {
         return self.entries.get(key);
     }
 
-    pub fn lookup_after(&self, lower_bound: &Bound<String>) -> Option<&str> {
-        // NOTE: Avoid having to clone the bound.
-        let mut range: Range<String, Mutation> = self.entries.range((lower_bound.clone(), Bound::Unbounded));
-        if let Some((key, _)) = range.next() {
-            return Some(key);
-        }
-        return None;
-    }
-
     pub fn first_in_range(&self, interval: &Interval<String>) -> Option<&str> {
         let mut range: Range<String, Mutation> = self.entries.range((interval.lower.clone(), interval.upper.clone()));
         return range.next().map(|(key, _)| key.as_str());

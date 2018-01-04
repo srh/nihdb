@@ -69,15 +69,17 @@ fn decode_mutation(v: &[u8], pos: &mut usize) -> Option<Mutation> {
     }
 }
 
-struct TableBuilder<'a> {
+pub struct TableBuilder {
     values_buf: Vec<u8>,
     keys_buf: Vec<u8>,
-    first_key: Option<&'a str>,
-    last_key: Option<&'a str>,
+    // NOTE: Instead of copying/allocating these, we could (a) reuse the same
+    // buffer, or (b) decode out of keys_buf when we need the value.
+    first_key: Option<String>,
+    last_key: Option<String>,
 }
 
-impl<'a> TableBuilder<'a> {
-    fn new() -> TableBuilder<'a> {
+impl TableBuilder {
+    pub fn new() -> TableBuilder {
         return TableBuilder{
             values_buf: Vec::new(),
             keys_buf: Vec::new(),
@@ -86,11 +88,21 @@ impl<'a> TableBuilder<'a> {
         };
     }
 
+    // Returns true if nothing has been written to the table builder.
+    pub fn is_empty(&self) -> bool {
+        return self.first_key.is_none();
+    }
+
+    pub fn file_size(&self) -> usize {
+        return self.values_buf.len() + self.keys_buf.len() + TAB_BACK_PADDING;
+    }
+
     // This method has to be called in increasing order.
-    fn add_mutation(&mut self, key: &'a str, value: &Mutation) {
-        self.last_key = Some(key);
+    // NOTE: Possibly could take key by value.
+    pub fn add_mutation(&mut self, key: &str, value: &Mutation) {
+        self.last_key = Some(key.to_string());
         if self.first_key.is_none() {
-            self.first_key = self.last_key;
+            self.first_key = self.last_key.clone();
         }
         let value_offset = self.values_buf.len() as u64;
         encode_mutation(&mut self.values_buf, value);
@@ -101,7 +113,7 @@ impl<'a> TableBuilder<'a> {
     }
 
     // Returns keys_offset, file_size, smallest key, biggest key.
-    fn finish(&mut self, writer: &mut Write) -> Result<(u64, u64, String, String)> {
+    pub fn finish(&mut self, writer: &mut Write) -> Result<(u64, u64, String, String)> {
         assert!(!self.first_key.is_none());
         let keys_offset = self.values_buf.len() as u64;
         encode_u64(&mut self.keys_buf, keys_offset);  // NOTE: Not necessary now that it's in TOC.
@@ -111,20 +123,20 @@ impl<'a> TableBuilder<'a> {
         return Ok((
             keys_offset,
             keys_offset + self.keys_buf.len() as u64,
-            self.first_key.unwrap().to_string(),
-            self.last_key.unwrap().to_string()
+            self.first_key.as_ref().unwrap().clone(),
+            self.last_key.as_ref().unwrap().clone(),
         ));
     }
 }
 
-fn table_filepath(dir: &str, table_id: u64) -> String {
+pub fn table_filepath(dir: &str, table_id: u64) -> String {
     return format!("{}/{}.tab", dir, table_id);
 }
 
 // Returns keys_offset, file_size, smallest key, biggest key.
 pub fn flush_to_disk<'a>(dir: &str, table_id: u64, m: &'a MemStore) -> Result<(u64, u64, String, String)> {
     assert!(!m.entries.is_empty());
-    let mut builder = TableBuilder::<'a>::new();
+    let mut builder = TableBuilder::new();
     
     for (key, value) in m.entries.iter() {
         builder.add_mutation(key, value);

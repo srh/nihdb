@@ -1,7 +1,7 @@
 #[allow(dead_code)]
 
 use std::collections::Bound;
-use std::rc::Rc;
+use std::iter::*;
 
 extern crate rand;
 extern crate owning_ref;
@@ -13,12 +13,12 @@ use disk::*;
 mod toc;
 use toc::*;
 mod error;
-use error::*;
 mod util;
 use util::*;
 mod iter;
 use iter::*;
 mod encoding;
+
 
 pub struct Store {
     // Never empty
@@ -108,9 +108,144 @@ impl Store {
 
     pub fn flush(&mut self) -> Result<()> {
         let ms: MemStore = self.memstores.remove(0);
+
+        // NOTE: Instead of flushing and compacting, we could, you know, do a
+        // flush into the compaction.
         self.flush_and_record(0, &ms)?;
+        if self.toc.level_infos.get(&0).map_or(false, |lz| lz.len() > 4) {
+            // Do a releveling with all but the latest (highest numbered) table.
+            let table_ids: Vec<TableId>
+                = self.toc.level_infos.get(&0).unwrap().iter().rev().skip(1).map(|&x| x).collect();
+            self.relevel(0, table_ids)?;
+        }
+
         self.memstores.insert(0, MemStore::new());
         return Ok(());
+    }
+
+    // 'tables' is in order of precedence, such that frontmost tables supercede
+    // later tables when merged.  (They're in reverse order by table number, if
+    // in level zero.  In other levels, there's only one table, and even if there
+    // was more than one, they'd have non-overlapping key ranges.)
+    fn relevel<'a>(&'a mut self, level: LevelNumber, tables: Vec<TableId>) -> Result<()> {
+        assert!(if level == 0 { tables.len() > 0 } else { tables.len() == 1 });
+        
+        // What to do:  Go to the next level, find which tables overlap.
+        let table_infos: Vec<TableInfo>
+            = tables.iter().map(|id| self.toc.table_infos.get(id).expect("toc valid in relevel").clone()).collect();
+        let lower_overlapping_ids: Vec<TableId> = Store::get_overlapping_tables(&self.toc, &table_infos, level + 1);
+
+        // NOTE: When releveling 0 -> 1, it's possible there are no overlapping tables.
+        if lower_overlapping_ids.is_empty() && !Store::self_overlaps(&table_infos) {
+            let additions: Vec<TableInfo>
+                = table_infos.into_iter().map(|x: TableInfo| TableInfo{level: level, .. x}).collect();
+            let entry = Entry{
+                removals: tables,
+                additions: additions,
+            };
+
+            append_toc(&mut self.toc, &mut self.toc_file, entry)?;
+            return Ok(());
+        } else {
+            let mut iters: Vec<Box<MutationIterator + 'a>> = Vec::new();
+            // NOTE: We might want a smarter iterator for the lower level --
+            // open only one table file at a time, instead of generically
+            // merging the non-overlapping tables together.
+
+            // Add upper level's tables in 'tables' existing order (which is in order of precedence).
+            // Order of lower level's tables doesn't matter, since they're non-overlapping.
+            for table_id in tables.iter().chain(lower_overlapping_ids.iter()) {
+                let lower_bound = Bound::Unbounded;
+                self.add_table_iter_to_iters(&mut iters, *table_id, &lower_bound)?;
+            }
+
+            let mut iter = MergeIterator::make(iters)?;
+
+            // Now we've got a store iter.  Iterate the store iter, building a set of tables.
+
+            let mut additions: Vec<TableInfo> = Vec::new();
+
+            'outer: loop {
+                let mut builder = TableBuilder::new();
+                'inner: loop {
+                    if let Some(key) = iter.current_key()? {
+                        let mutation = iter.current_value()?.expect("mutation given key in relevel");
+                        builder.add_mutation(&key, &mutation);
+                        iter.step()?;
+                        if builder.file_size() > self.threshold {
+                            break 'inner;
+                        }
+                    } else {
+                        if builder.is_empty() {
+                            break 'outer;
+                        } else {
+                            break 'inner;
+                        }
+                    }
+                }
+
+                // We've got a non-empty builder.  Flush it to disk.
+                let table_id = self.toc.next_table_id;
+                self.toc.next_table_id += 1;
+
+                let mut f = std::fs::File::create(table_filepath(&self.directory, table_id))?;
+                let (keys_offset, file_size, smallest, biggest) = builder.finish(&mut f)?;
+                additions.push(TableInfo{
+                    id: table_id,
+                    level: level + 1,
+                    keys_offset: keys_offset,
+                    file_size: file_size,
+                    smallest_key: smallest,
+                    biggest_key: biggest,
+                });
+            }
+
+            let removals: Vec<TableId>
+                = tables.iter().chain(lower_overlapping_ids.iter()).map(|&x| x).collect();
+
+            let entry = Entry{
+                additions: additions,
+                removals: removals,
+            };
+
+            append_toc(&mut self.toc, &mut self.toc_file, entry)?;
+            // NOTE: Delete old files when releveling.
+
+            return Ok(());
+        }
+    }
+
+    fn self_overlaps(xs: &[TableInfo]) -> bool {
+        for i in 0..xs.len() {
+            for j in i+1..xs.len() {
+                if Store::tables_overlap(&xs[i], &xs[j]) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    fn tables_overlap(x: &TableInfo, y: &TableInfo) -> bool {
+        return !(x.biggest_key < y.smallest_key || y.biggest_key < x.smallest_key);
+    }
+
+    // NOTE: We'd like a better data structure for organizing a level's table by keys.
+    fn get_overlapping_tables(toc: &TOC, tables: &[TableInfo], level: LevelNumber) -> Vec<TableId> {
+        if let Some(level_tables) = toc.level_infos.get(&level) {
+            let mut ret: Vec<TableId> = Vec::new();
+            for id in level_tables {
+                for info in tables {
+                    if Store::tables_overlap(toc.table_infos.get(id).expect("toc valid in get_overlapping_tables"), info) {
+                        ret.push(*id);
+                        break;
+                    }
+                }
+            }
+            return ret;
+        } else {
+            return Vec::new();
+        }
     }
 
     fn consider_split(&mut self) -> Result<()> {
@@ -230,7 +365,11 @@ impl Store {
                     self.add_table_iter_to_iters(&mut iters, *table_id, &interval.lower)?;
                 }
             } else {
-                panic!("Iterating non-zero levels not supported");
+                // NOTE: We should only add those tables with relevant documents.  And iterate in order.
+                // Order doesn't matter for now because it describes key precedence.
+                for table_id in table_ids.iter() {
+                    self.add_table_iter_to_iters(&mut iters, *table_id, &interval.lower)?;
+                }
             }
         }
 
