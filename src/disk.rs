@@ -282,9 +282,7 @@ pub fn load_table_keys_buf(dir: &str, ti: &TableInfo) -> Result<(std::fs::File, 
 fn advance_past_lower_bound(iter: &mut TableKeysIterator, lower: &Bound<String>) -> Result<()> {
     // NOTE: Double-decodes keys.
     while let Some((key, _, _)) = TableKeysIterator::help_current_key(&iter.keys, iter.keys_pos)? {
-        println!("Advance past... key {} bound {:?}", key, lower);
         if above_lower_bound(key, lower) {
-            println!("Stopped advancing at key {}", key);
             return Ok(());
         }
         TableKeysIterator::help_step_key(&iter.keys, &mut iter.keys_pos)?;
@@ -334,10 +332,11 @@ impl MutationIterator for TableIterator {
 
     fn current_value(&self) -> Result<Option<Mutation>> {
         if let Some((_, value_offset, value_length)) = self.keys_iter.current_key()? {
-            let value_offset = try_into_size(value_offset).or_err("value_offset not size")?;
+            let value_rel_offset: u64 = value_offset - self.offset_of_values_buf;
+            let value_rel_offset = try_into_size(value_rel_offset).or_err("value_rel_offset not size")?;
             let value_length = try_into_size(value_length).or_err("value_length not size")?;
 
-            let sl: &[u8] = self.values_buf.get(value_offset..value_offset + value_length)
+            let sl: &[u8] = self.values_buf.get(value_rel_offset..value_rel_offset + value_length)
                 .or_err("bad value offset/length")?;
 
             let mut pos: usize = 0;

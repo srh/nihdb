@@ -107,8 +107,8 @@ impl Store {
     }
 
     pub fn flush(&mut self) -> Result<()> {
-        self.do_flush()?;
-        let _ = self.memstores.remove(0);
+        let ms: MemStore = self.memstores.remove(0);
+        self.flush_and_record(0, &ms)?;
         self.memstores.insert(0, MemStore::new());
         return Ok(());
     }
@@ -120,8 +120,7 @@ impl Store {
         return Ok(());
     }
 
-    fn do_flush(&mut self) -> Result<()> {
-        let ms: &MemStore = &self.memstores[0];
+    fn flush_and_record(&mut self, level: LevelNumber, ms: &MemStore) -> Result<()> {
         if ms.entries.is_empty() {
             return Ok(());
         }
@@ -130,7 +129,7 @@ impl Store {
         let (keys_offset, file_size, smallest, biggest) = flush_to_disk(&self.directory, table_id, &ms)?;
         let ti = TableInfo{
             id: table_id,
-            level: 0,
+            level: level,
             keys_offset: keys_offset,
             file_size: file_size,
             smallest_key: smallest,
@@ -151,9 +150,7 @@ impl Store {
         }
         // NOTE: We're still using a big fat memstore, so we only get to here with keys we
         // never used.
-        println!("exists processing levels for key {}, num tables = {}", key, self.toc.table_infos.len());
         for (_level, table_ids) in self.toc.level_infos.iter() {
-            println!("processing level {} for key {}", _level, key);
             // For level zero, we want to iterate tables in reverse order.
             for table_id in table_ids.iter().rev() {
                 let ti: &TableInfo = self.toc.table_infos.get(table_id).expect("invalid toc");
@@ -170,8 +167,6 @@ impl Store {
 
             }
         }
-
-        println!("done processing levels, not found, for key {}", key);
 
         return false;
     }

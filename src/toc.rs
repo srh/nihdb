@@ -189,7 +189,6 @@ pub fn read_toc(dir: &str) -> Option<(std::fs::File, TOC)> {
         if let Some(entry) = decode_entry(&buf, &mut pos) {
             process_entry(&mut toc, entry);
         } else {
-            println!("Truncating toc to {}", savepos);
             f.set_len(savepos as u64).expect("read_toc set len");  // NOTE error handling
             return Some((f, toc));
         }
