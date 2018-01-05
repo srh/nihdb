@@ -1,6 +1,6 @@
 RihDB
 
-A "Rust" re-implementation of my (not released) "not-invented-here" DB.
+A simple single-threaded KV store, with read/write/range-get operations.
 
 A work in progress.  Run "cargo test".
 
@@ -8,4 +8,4 @@ Its license right now is AGPLv3-only, because I don't feel like thinking about
 it.  If you ask nicely, I might change it.
 
 Right now this is a very simple LSM-tree storage library.  It doesn't cache any
-data in memory, reads way too much, and has no crash resistance.
+data in memory and has no crash resistance.
