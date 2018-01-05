@@ -60,7 +60,7 @@ fn decode_mutation(v: &[u8], pos: &mut usize) -> Option<Mutation> {
     let b: u8 = *v.get(*pos)?;
     *pos += 1;
     if b == 0 {
-        let s: String = decode_str(&v, pos)?;
+        let s: Buf = decode_str(&v, pos)?;
         return Some(Mutation::Set(s));
     } else if b == 1 {
         return Some(Mutation::Delete);
@@ -74,8 +74,8 @@ pub struct TableBuilder {
     keys_buf: Vec<u8>,
     // NOTE: Instead of copying/allocating these, we could (a) reuse the same
     // buffer, or (b) decode out of keys_buf when we need the value.
-    first_key: Option<String>,
-    last_key: Option<String>,
+    first_key: Option<Buf>,
+    last_key: Option<Buf>,
 }
 
 impl TableBuilder {
@@ -99,8 +99,8 @@ impl TableBuilder {
 
     // This method has to be called in increasing order.
     // NOTE: Possibly could take key by value.
-    pub fn add_mutation(&mut self, key: &str, value: &Mutation) {
-        self.last_key = Some(key.to_string());
+    pub fn add_mutation(&mut self, key: &[u8], value: &Mutation) {
+        self.last_key = Some(key.to_vec());
         if self.first_key.is_none() {
             self.first_key = self.last_key.clone();
         }
@@ -113,7 +113,7 @@ impl TableBuilder {
     }
 
     // Returns keys_offset, file_size, smallest key, biggest key.
-    pub fn finish(&mut self, writer: &mut Write) -> Result<(u64, u64, String, String)> {
+    pub fn finish(&mut self, writer: &mut Write) -> Result<(u64, u64, Buf, Buf)> {
         assert!(!self.first_key.is_none());
         let keys_offset = self.values_buf.len() as u64;
         encode_u64(&mut self.keys_buf, keys_offset);  // NOTE: Not necessary now that it's in TOC.
@@ -134,7 +134,7 @@ pub fn table_filepath(dir: &str, table_id: u64) -> String {
 }
 
 // Returns keys_offset, file_size, smallest key, biggest key.
-pub fn flush_to_disk<'a>(dir: &str, table_id: u64, m: &'a MemStore) -> Result<(u64, u64, String, String)> {
+pub fn flush_to_disk<'a>(dir: &str, table_id: u64, m: &'a MemStore) -> Result<(u64, u64, Buf, Buf)> {
     assert!(!m.entries.is_empty());
     let mut builder = TableBuilder::new();
     
@@ -150,7 +150,7 @@ fn open_table_file(dir: &str, table_id: u64) -> Result<std::fs::File> {
     return Ok(f);
 }
 
-pub fn iterate_table(dir: &str, ti: &TableInfo, func: &mut FnMut(String, Mutation) -> ()) -> Result<()> {
+pub fn iterate_table(dir: &str, ti: &TableInfo, func: &mut FnMut(Buf, Mutation) -> ()) -> Result<()> {
     let mut buf = Vec::<u8>::new();
     {
         let mut f: std::fs::File = open_table_file(dir, ti.id)?;
@@ -183,7 +183,7 @@ pub fn iterate_table(dir: &str, ti: &TableInfo, func: &mut FnMut(String, Mutatio
         if pos != value_length {
             Err(RihError::new("mutation decoded to small"))?;
         }
-        func(key.to_string(), value);
+        func(key.to_vec(), value);
     }
 
     return Ok(());
@@ -199,7 +199,7 @@ fn read_exact(f: &mut std::fs::File, offset: u64, length: usize) -> Result<Vec<u
     return Ok(buf);
 }
 
-pub fn lookup_table(dir: &str, ti: &TableInfo, key: &str) -> Result<Option<Mutation>> {
+pub fn lookup_table(dir: &str, ti: &TableInfo, key: &[u8]) -> Result<Option<Mutation>> {
     let (mut f, keys_buf) = load_table_keys_buf(dir, ti)?;
     
     // NOTE: Give file better random access structure
@@ -236,16 +236,16 @@ impl TableKeysIterator {
         return TableKeysIterator{keys: keys, keys_pos: 0};
     }
 
-    fn decode_key<'a>(keys: &'a RcRef<Vec<u8>, [u8]>, pos: &mut usize) -> Result<(&'a str, u64, u64)> {
+    fn decode_key<'a>(keys: &'a RcRef<Vec<u8>, [u8]>, pos: &mut usize) -> Result<(&'a [u8], u64, u64)> {
         let value_offset: u64 = decode_uint(keys, pos)
             .or_err("could not decode value_offset")?;
         let value_length: u64 = decode_uint(keys, pos)
             .or_err("could not decode value_length")?;
-        let key: &str = observe_str(&*keys, pos).or_err("cannot decode key")?;
+        let key: &[u8] = observe_str(&*keys, pos).or_err("cannot decode key")?;
         return Ok((key, value_offset, value_length));
     }
 
-    fn help_current_key(keys: &RcRef<Vec<u8>, [u8]>, keys_pos: usize) -> Result<Option<(&str, u64, u64)>> {
+    fn help_current_key(keys: &RcRef<Vec<u8>, [u8]>, keys_pos: usize) -> Result<Option<(&[u8], u64, u64)>> {
         if keys_pos == keys.len() {
             return Ok(None);
         }
@@ -255,7 +255,7 @@ impl TableKeysIterator {
         return Ok(Some(tup));
     }
 
-    fn current_key(&self) -> Result<Option<(&str, u64, u64)>> {
+    fn current_key(&self) -> Result<Option<(&[u8], u64, u64)>> {
         return TableKeysIterator::help_current_key(&self.keys, self.keys_pos);
     }
 
@@ -272,7 +272,7 @@ impl TableKeysIterator {
         return TableKeysIterator::help_step_key(&self.keys, &mut self.keys_pos)
     }
 
-    fn next_key(&mut self) -> Result<Option<(&str, u64, u64)>> {
+    fn next_key(&mut self) -> Result<Option<(&[u8], u64, u64)>> {
         if let Some(ret) = TableKeysIterator::help_current_key(&self.keys, self.keys_pos)? {
             TableKeysIterator::help_step_key(&self.keys, &mut self.keys_pos)?;
             return Ok(Some(ret));
@@ -291,7 +291,7 @@ pub fn load_table_keys_buf(dir: &str, ti: &TableInfo) -> Result<(std::fs::File, 
     return Ok((f, keys_buf));
 }
 
-fn advance_past_lower_bound(iter: &mut TableKeysIterator, lower: &Bound<String>) -> Result<()> {
+fn advance_past_lower_bound(iter: &mut TableKeysIterator, lower: &Bound<Buf>) -> Result<()> {
     // NOTE: Double-decodes keys.
     while let Some((key, _, _)) = TableKeysIterator::help_current_key(&iter.keys, iter.keys_pos)? {
         if above_lower_bound(key, lower) {
@@ -312,7 +312,7 @@ pub struct TableIterator {
 }
 
 impl TableIterator {
-    pub fn make(dir: &str, ti: &TableInfo, interval: &Interval<String>) -> Result<TableIterator> {
+    pub fn make(dir: &str, ti: &TableInfo, interval: &Interval<Buf>) -> Result<TableIterator> {
         let (mut f, keys_buf) = load_table_keys_buf(dir, ti)?;
         let mut keys_iter = TableKeysIterator::whole_table(RcRef::new(Rc::new(keys_buf)).map(|v| v as &[u8]));
         advance_past_lower_bound(&mut keys_iter, &interval.lower)?;
@@ -338,8 +338,8 @@ impl TableIterator {
 }
 
 impl MutationIterator for TableIterator {
-    fn current_key(&self) -> Result<Option<String>> {
-        return self.keys_iter.current_key().map(|x| x.map(|(k, _, _)| k.to_string()));
+    fn current_key(&self) -> Result<Option<Buf>> {
+        return self.keys_iter.current_key().map(|x| x.map(|(k, _, _)| k.to_vec()));
     }
 
     fn current_value(&self) -> Result<Option<Mutation>> {

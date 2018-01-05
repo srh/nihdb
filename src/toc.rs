@@ -2,6 +2,7 @@ use std;
 use std::collections::*;
 use std::io::*;
 use encoding::*;
+use util::*;
 use std::result::Result;
 
 extern crate crc;
@@ -46,8 +47,8 @@ pub struct TableInfo {
     pub file_size: u64,
     // The smallest and biggest keys (defining a closed interval) in the file.
     // (The file must always have at least one key.)
-    pub smallest_key: String,
-    pub biggest_key: String,
+    pub smallest_key: Buf,
+    pub biggest_key: Buf,
 }
 
 fn toc_filename(dir: &str) -> String {
@@ -93,8 +94,8 @@ fn decode_table_info(buf: &[u8], pos: &mut usize) -> Option<TableInfo> {
     let level: u64 = decode_uint(&buf, pos)?;
     let keys_offset: u64 = decode_uint(&buf, pos)?;
     let file_size: u64 = decode_uint(&buf, pos)?;
-    let smallest_key: String = decode_str(&buf, pos)?;
-    let biggest_key: String = decode_str(&buf, pos)?;
+    let smallest_key: Buf = decode_str(&buf, pos)?;
+    let biggest_key: Buf = decode_str(&buf, pos)?;
     return Some(TableInfo{
         id: id,
         level: level,

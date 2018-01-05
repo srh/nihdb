@@ -19,7 +19,6 @@ mod iter;
 use iter::*;
 mod encoding;
 
-
 pub struct Store {
     // Never empty
     memstores: Vec<MemStore>,
@@ -30,7 +29,7 @@ pub struct Store {
 }
 
 pub struct StoreIter<'a> {
-    interval: Interval<String>,
+    interval: Interval<Buf>,
     iters: MergeIterator<'a>,
 }
 
@@ -52,7 +51,7 @@ impl Store {
         let mut ms = MemStore::new();
         for fileno in 0..toc.next_table_id {
             if let Some(table_info) = toc.table_infos.get(&fileno) {
-                iterate_table(dir, table_info, &mut |key: String, value: Mutation| {
+                iterate_table(dir, table_info, &mut |key: Buf, value: Mutation| {
                     ms.apply(key, value);
                 })?;
             }
@@ -76,7 +75,7 @@ impl Store {
         }
     }
 
-    pub fn insert(&mut self, key: &str, val: &str) -> Result<bool> {
+    pub fn insert(&mut self, key: &[u8], val: &[u8]) -> Result<bool> {
         if !self.exists(key) {
             self.put(key, val)?;
             return Ok(true);
@@ -84,7 +83,7 @@ impl Store {
         return Ok(false);
     }
 
-    pub fn replace(&mut self, key: &str, val: &str) -> Result<bool> {
+    pub fn replace(&mut self, key: &[u8], val: &[u8]) -> Result<bool> {
         if self.exists(key) {
             self.put(key, val)?;
             return Ok(true);
@@ -92,14 +91,14 @@ impl Store {
         return Ok(false);
     }
 
-    pub fn put(&mut self, key: &str, val: &str) -> Result<()> {
-        self.memstores[0].apply(key.to_string(), Mutation::Set(val.to_string()));
+    pub fn put(&mut self, key: &[u8], val: &[u8]) -> Result<()> {
+        self.memstores[0].apply(key.to_vec(), Mutation::Set(val.to_vec()));
         return self.consider_split();
     }
 
-    pub fn remove(&mut self, key: &str) -> Result<bool> {
+    pub fn remove(&mut self, key: &[u8]) -> Result<bool> {
         if self.exists(key) {
-            self.memstores[0].apply(key.to_string(), Mutation::Delete);
+            self.memstores[0].apply(key.to_vec(), Mutation::Delete);
             self.consider_split()?;
             return Ok(true);
         }
@@ -332,7 +331,7 @@ impl Store {
         return Ok(());
     }
 
-    pub fn exists(&mut self, key: &str) -> bool {
+    pub fn exists(&mut self, key: &[u8]) -> bool {
         for store in self.memstores.iter() {
             if let Some(m) = store.lookup(key) {
                 return match m {
@@ -364,7 +363,7 @@ impl Store {
         return false;
     }
 
-    pub fn get(&mut self, key: &str) -> Option<String> {
+    pub fn get(&mut self, key: &[u8]) -> Option<Buf> {
         for store in self.memstores.iter() {
             if let Some(m) = store.lookup(key) {
                 return match m {
@@ -395,11 +394,11 @@ impl Store {
     }
 
     fn add_table_iter_to_iters<'a>(
-        &self, iters: &mut Vec<Box<MutationIterator + 'a>>, table_id: TableId, lower_bound: &Bound<String>)
+        &self, iters: &mut Vec<Box<MutationIterator + 'a>>, table_id: TableId, lower_bound: &Bound<Buf>)
         -> Result<()> {
         let ti: &TableInfo = self.toc.table_infos.get(&table_id).expect("invalid toc");
         // NOTE: Don't clone the lower bound every freaking time.
-        let interval = Interval::<String>{lower: lower_bound.clone(), upper: Bound::Unbounded};
+        let interval = Interval::<Buf>{lower: lower_bound.clone(), upper: Bound::Unbounded};
         let iter = TableIterator::make(&self.directory, ti, &interval)?;
         iters.push(Box::new(iter));
         return Ok(());
@@ -408,7 +407,7 @@ impl Store {
     // NOTE: Add directional ranges (i.e. backwards range iteration).
     // NOTE: If the StoreIter keeps self borrowed, it should hold a reference to self that we can use
     // to iterate.
-    pub fn range<'a>(&'a self, interval: &Interval<String>) -> Result<StoreIter<'a>> {
+    pub fn range<'a>(&'a self, interval: &Interval<Buf>) -> Result<StoreIter<'a>> {
         // NOTE: Could short-circuit for empty/one-key interval.
         let mut iters: Vec<Box<MutationIterator + 'a>> = Vec::new();
         for store in self.memstores.iter() {
@@ -437,7 +436,7 @@ impl Store {
         });
     }
 
-    pub fn next(&self, iter: &mut StoreIter) -> Result<Option<(String, String)>> {
+    pub fn next(&self, iter: &mut StoreIter) -> Result<Option<(Buf, Buf)>> {
         loop {
             if let Some(key) = iter.iters.current_key()? {
                 if !below_upper_bound(&key, &iter.interval.upper) {
@@ -513,31 +512,35 @@ mod tests {
         }
     }
 
+    fn b(s: &str) -> &[u8] {
+        return s.as_bytes();
+    }
+
     #[test]
     fn putget() {
         let mut ts = TestStore::create();
         let kv = ts.kv();
-        kv.put("foo", "Hey").unwrap();
-        let x: Option<String> = kv.get("foo");
-        assert_eq!(Some("Hey".to_string()), x);
-        assert!(kv.exists("foo"));
-        assert_eq!(None, kv.get("bar"));
-        assert!(!kv.exists("bar"));
+        kv.put(b("foo"), b("Hey")).unwrap();
+        let x: Option<Buf> = kv.get(b("foo"));
+        assert_eq!(Some(b("Hey").to_vec()), x);
+        assert!(kv.exists(b("foo")));
+        assert_eq!(None, kv.get(b("bar")));
+        assert!(!kv.exists(b("bar")));
     }
 
     #[test]
     fn range() {
         let mut ts = TestStore::create();
         let kv = ts.kv();
-        kv.put("a", "alpha").unwrap();
-        kv.put("b", "beta").unwrap();
-        kv.put("c", "charlie").unwrap();
-        kv.put("d", "delta").unwrap();
-        let interval = Interval::<String>{lower: Bound::Unbounded, upper: Bound::Excluded("d".to_string())};
+        kv.put(b("a"), b("alpha")).unwrap();
+        kv.put(b("b"), b("beta")).unwrap();
+        kv.put(b("c"), b("charlie")).unwrap();
+        kv.put(b("d"), b("delta")).unwrap();
+        let interval = Interval::<Buf>{lower: Bound::Unbounded, upper: Bound::Excluded(b("d").to_vec())};
         let mut it: StoreIter = kv.range(&interval).expect("range");
-        assert_eq!(Some(("a".to_string(), "alpha".to_string())), kv.next(&mut it).unwrap());
-        assert_eq!(Some(("b".to_string(), "beta".to_string())), kv.next(&mut it).unwrap());
-        assert_eq!(Some(("c".to_string(), "charlie".to_string())), kv.next(&mut it).unwrap());
+        assert_eq!(Some((b("a").to_vec(), b("alpha").to_vec())), kv.next(&mut it).unwrap());
+        assert_eq!(Some((b("b").to_vec(), b("beta").to_vec())), kv.next(&mut it).unwrap());
+        assert_eq!(Some((b("c").to_vec(), b("charlie").to_vec())), kv.next(&mut it).unwrap());
         assert_eq!(None, kv.next(&mut it).unwrap());
     }
 
@@ -546,36 +549,36 @@ mod tests {
         let mut ts = TestStore::create();
         let kv = ts.kv();
 
-        kv.put("a", "alpha").unwrap();
-        kv.put("a", "alpha-2").unwrap();
-        assert_eq!(Some("alpha-2".to_string()), kv.get("a"));
-        let inserted: bool = kv.insert("a", "alpha-3").unwrap();
+        kv.put(b("a"), b("alpha")).unwrap();
+        kv.put(b("a"), b("alpha-2")).unwrap();
+        assert_eq!(Some(b("alpha-2").to_vec()), kv.get(b("a")));
+        let inserted: bool = kv.insert(b("a"), b("alpha-3")).unwrap();
         assert!(!inserted);
-        let overwrote: bool = kv.replace("a", "alpha-4").unwrap();
+        let overwrote: bool = kv.replace(b("a"), b("alpha-4")).unwrap();
         assert!(overwrote);
-        assert_eq!(Some("alpha-4".to_string()), kv.get("a"));
+        assert_eq!(Some(b("alpha-4").to_vec()), kv.get(b("a")));
     }
 
     fn write_basic_kv(ts: &mut TestStore) {
         let kv = ts.kv();
         for i in 0..102 {
-            kv.put(&i.to_string(), &format!("value-{}", i.to_string())).unwrap();
+            kv.put(b(&i.to_string()), b(&format!("value-{}", i.to_string()))).unwrap();
         }
         // Remove one, so that we test Delete entries really do override Set entries.
-        let removed: bool = kv.remove("11").unwrap();
+        let removed: bool = kv.remove(b("11")).unwrap();
         assert!(removed);
         assert!(1 < kv.memstores.len());
     }
 
     fn verify_basic_kv(ts: &mut TestStore) {
         let kv = ts.kv();
-        let interval = Interval::<String>{lower: Bound::Excluded("1".to_string()), upper: Bound::Unbounded};
+        let interval = Interval::<Buf>{lower: Bound::Excluded(b("1").to_vec()), upper: Bound::Unbounded};
         let mut it: StoreIter = kv.range(&interval).expect("range");
-        assert_eq!(Some(("10".to_string(), "value-10".to_string())), kv.next(&mut it).unwrap());
-        assert_eq!(Some(("100".to_string(), "value-100".to_string())), kv.next(&mut it).unwrap());
-        assert_eq!(Some(("101".to_string(), "value-101".to_string())), kv.next(&mut it).unwrap());
-        assert_eq!(Some(("12".to_string(), "value-12".to_string())), kv.next(&mut it).unwrap());
-        assert_eq!(Some(("13".to_string(), "value-13".to_string())), kv.next(&mut it).unwrap());
+        assert_eq!(Some((b("10").to_vec(), b("value-10").to_vec())), kv.next(&mut it).unwrap());
+        assert_eq!(Some((b("100").to_vec(), b("value-100").to_vec())), kv.next(&mut it).unwrap());
+        assert_eq!(Some((b("101").to_vec(), b("value-101").to_vec())), kv.next(&mut it).unwrap());
+        assert_eq!(Some((b("12").to_vec(), b("value-12").to_vec())), kv.next(&mut it).unwrap());
+        assert_eq!(Some((b("13").to_vec(), b("value-13").to_vec())), kv.next(&mut it).unwrap());
     }
 
     #[test]
@@ -605,6 +608,6 @@ mod tests {
         assert!(ts.close().is_some());
         ts.open();
         // This actually hits the disk, because the key has no reference in the memstores.
-        assert_eq!(None, ts.kv().get("bogus"));
+        assert_eq!(None, ts.kv().get(b("bogus")));
     }
 }

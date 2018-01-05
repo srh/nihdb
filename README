@@ -2,14 +2,10 @@ RihDB
 
 A "Rust" re-implementation of my (not released) "not-invented-here" DB.
 
-A work in progress.  Not a serious project.  Run "cargo test".
+A work in progress.  Run "cargo test".
 
-Its license right now is AGPLv3-only.  If you ask nicely, I might change it.
+Its license right now is AGPLv3-only, because I don't feel like thinking about
+it.  If you ask nicely, I might change it.
 
-Right now this is a _very_ simple key value store library.  All data must fit in
-memory, and all the files are loaded at startup (which could be slow!).  There
-is no history compaction, so disk storage might be proportional to the total
-number of writes you've done.
-
-It stores Strings (which are unicode monsters) instead of something sensible
-like byte-slices.  Sorry.
+Right now this is a very simple LSM-tree storage library.  It doesn't cache any
+data in memory, reads way too much, and has no crash resistance.
