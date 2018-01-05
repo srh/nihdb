@@ -615,4 +615,54 @@ mod tests {
         // This actually hits the disk, because the key has no reference in the memstores.
         assert_eq!(None, ts.kv().get(b("bogus")));
     }
+
+    fn big_key(num: u64) -> Buf { format!("{:08}", num).as_bytes().to_vec() }
+    fn big_value(num: u64) -> Buf { format!("value-{}", num).as_bytes().to_vec() }
+
+    fn write_big_kv(ts: &mut TestStore) {
+        let kv = ts.kv();
+        let n = 1000;
+        for i in 0..n {
+            kv.put(&big_key(i), &big_value(i)).unwrap();
+        }
+        for j in 0..n/2 {
+            let i = j * 2 + 1;
+            let removed: bool = kv.remove(&big_key(i)).unwrap();
+            assert!(removed);
+        }
+    }
+
+    fn verify_big_kv_range(kv: &mut Store, low: u64, high: u64) {
+        let interval = Interval::<Buf>{
+            lower: Bound::Included(big_key(low)),
+            upper: Bound::Included(big_key(high)),
+        };
+        let mut i = low;
+        if i % 2 == 1 {
+            i += 1;
+        }
+        let mut it: StoreIter = kv.range(&interval).expect("range");
+        while let Some((k, v)) = kv.next(&mut it).expect("next") {
+            assert_eq!(&big_key(i), &k);
+            assert_eq!(&big_value(i), &v);
+            i += 2;
+        }
+        if high % 2 == 0 {
+            assert_eq!(high + 2, i);
+        } else {
+            assert_eq!(high + 1, i);
+        }
+    }
+
+    fn verify_big_kv(ts: &mut TestStore) {
+        let kv = ts.kv();
+        verify_big_kv_range(kv, 145, 346);
+    }
+
+    #[test]
+    fn big_disk() {
+        let mut ts = TestStore::create();
+        write_big_kv(&mut ts);
+        verify_big_kv(&mut ts);
+    }
 }
