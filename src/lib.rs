@@ -270,6 +270,10 @@ impl Store {
         }
     }
 
+    fn table_overlaps_interval(x: &TableInfo, y: &Interval<Buf>) -> bool {
+        return !(!above_lower_bound(&x.biggest_key, &y.lower) || !below_upper_bound(&x.smallest_key, &y.upper));
+    }
+
     fn self_overlaps(xs: &[TableInfo]) -> bool {
         for i in 0..xs.len() {
             for j in i+1..xs.len() {
@@ -420,10 +424,13 @@ impl Store {
                     self.add_table_iter_to_iters(&mut iters, *table_id, &interval.lower)?;
                 }
             } else {
-                // NOTE: We should only add those tables with relevant documents.  And iterate in order.
-                // Order doesn't matter for now because it describes key precedence.
+                // NOTE: We should iterate in order. Order doesn't matter for
+                // now because it describes key precedence.
                 for table_id in table_ids.iter() {
-                    self.add_table_iter_to_iters(&mut iters, *table_id, &interval.lower)?;
+                    let table_info: &TableInfo = self.toc.table_infos.get(table_id).expect("valid toc in range");
+                    if Store::table_overlaps_interval(table_info, interval) {
+                        self.add_table_iter_to_iters(&mut iters, *table_id, &interval.lower)?;
+                    }
                 }
             }
         }
