@@ -13,7 +13,6 @@ pub fn decode_uvarint(v: &[u8], pos: &mut usize) -> Option<u64> {
     let mut shift: u32 = 0;
     while *pos < v.len() {
         let b: u8 = v[*pos];
-        println!("decoded byte {}", b);
         *pos += 1;
         n |= ((b & 127) as u64) << shift;
         shift += 7;
