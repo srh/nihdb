@@ -512,16 +512,16 @@ mod tests {
     }
 
     impl TestStore {
-        fn create() -> TestStore {
+        fn create(threshold: usize) -> TestStore {
             let dir: String = random_testdir();
             Store::create(&dir).unwrap();
             let mut ts = TestStore{store: None, directory: dir};
-            ts.open();
+            ts.open(threshold);
             return ts;
         }
-        fn open(&mut self) {
+        fn open(&mut self, threshold: usize) {
             assert!(self.store.is_none());
-            let store: Store = Store::open(&self.directory, 100).unwrap();
+            let store: Store = Store::open(&self.directory, threshold).unwrap();
             self.store = Some(store);
         }
         fn close(&mut self) -> Option<()> {
@@ -538,7 +538,7 @@ mod tests {
 
     #[test]
     fn putget() {
-        let mut ts = TestStore::create();
+        let mut ts = TestStore::create(100);
         let kv = ts.kv();
         kv.put(b("foo"), b("Hey")).unwrap();
         let x: Option<Buf> = kv.get(b("foo"));
@@ -550,7 +550,7 @@ mod tests {
 
     #[test]
     fn range() {
-        let mut ts = TestStore::create();
+        let mut ts = TestStore::create(100);
         let kv = ts.kv();
         kv.put(b("a"), b("alpha")).unwrap();
         kv.put(b("b"), b("beta")).unwrap();
@@ -566,7 +566,7 @@ mod tests {
 
     #[test]
     fn overwrite() {
-        let mut ts = TestStore::create();
+        let mut ts = TestStore::create(100);
         let kv = ts.kv();
 
         kv.put(b("a"), b("alpha")).unwrap();
@@ -603,30 +603,30 @@ mod tests {
 
     #[test]
     fn many() {
-        let mut ts = TestStore::create();
+        let mut ts = TestStore::create(100);
         write_basic_kv(&mut ts);
         verify_basic_kv(&mut ts);
     }
 
     #[test]
     fn disk() {
-        let mut ts = TestStore::create();
+        let mut ts = TestStore::create(100);
         write_basic_kv(&mut ts);
         ts.kv().flush().unwrap();
         // Remove (and drop) existing store.
         assert!(ts.close().is_some());
-        ts.open();
+        ts.open(100);
         verify_basic_kv(&mut ts);
     }
 
     #[test]
     fn disk_missing_key() {
-        let mut ts = TestStore::create();
+        let mut ts = TestStore::create(100);
         write_basic_kv(&mut ts);
         ts.kv().flush().unwrap();
         // Remove (and drop) existing store.
         assert!(ts.close().is_some());
-        ts.open();
+        ts.open(100);
         // This actually hits the disk, because the key has no reference in the memstores.
         assert_eq!(None, ts.kv().get(b("bogus")));
     }
@@ -634,9 +634,8 @@ mod tests {
     fn big_key(num: u64) -> Buf { format!("{:08}", num).as_bytes().to_vec() }
     fn big_value(num: u64) -> Buf { format!("value-{}", num).as_bytes().to_vec() }
 
-    fn write_big_kv(ts: &mut TestStore) {
+    fn write_big_kv(ts: &mut TestStore, n: u64) {
         let kv = ts.kv();
-        let n = 1000;
         for i in 0..n {
             kv.put(&big_key(i), &big_value(i)).unwrap();
         }
@@ -675,9 +674,32 @@ mod tests {
     }
 
     #[test]
-    fn big_disk() {
-        let mut ts = TestStore::create();
-        write_big_kv(&mut ts);
+    fn big_many() {
+        let mut ts = TestStore::create(100);
+        write_big_kv(&mut ts, 1000);
         verify_big_kv(&mut ts);
     }
+
+    #[test]
+    fn big_many_disk() {
+        let mut ts = TestStore::create(100);
+        write_big_kv(&mut ts, 1000);
+        ts.kv().flush().unwrap();
+        // Remove (and drop) existing store.
+        assert!(ts.close().is_some());
+        ts.open(100);
+        verify_big_kv(&mut ts);
+    }
+
+    #[test]
+    fn big_many_threshold() {
+        let mut ts = TestStore::create(2000000);
+        write_big_kv(&mut ts, 1000);
+        ts.kv().flush().unwrap();
+        // Remove (and drop) existing store.
+        assert!(ts.close().is_some());
+        ts.open(100);
+        verify_big_kv(&mut ts);
+    }
+
 }
