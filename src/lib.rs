@@ -1,23 +1,21 @@
-#[allow(dead_code)]
-
 use std::collections::Bound;
 use std::iter::*;
 
-extern crate rand;
 extern crate owning_ref;
+extern crate rand;
 
-mod memstore;
-use memstore::*;
 mod disk;
 use disk::*;
-mod toc;
-use toc::*;
+mod encoding;
 mod error;
-mod util;
-use util::*;
 mod iter;
 use iter::*;
-mod encoding;
+mod memstore;
+use memstore::*;
+mod toc;
+use toc::*;
+mod util;
+use util::*;
 
 pub struct Store {
     // Never empty

@@ -1,5 +1,14 @@
-use util::*;
 use error::*;
+use util::*;
+
+// NOTE: Avoid copying out whole String for key
+pub trait MutationIterator {
+    fn current_key(&self) -> Result<Option<Buf>>;
+    // NOTE: Collapse this Option into the Result, since None is caused by bad
+    // API usage.
+    fn current_value(&self) -> Result<Option<Mutation>>;
+    fn step(&mut self) -> Result<()>;
+}
 
 pub struct MergeIterator<'a> {
     // iters and iters_front are parallel arrays.

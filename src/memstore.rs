@@ -1,5 +1,7 @@
-use util::*;
 use error::*;
+use iter::*;
+use util::*;
+
 use std::collections::*;
 use std::collections::btree_map::*;
 

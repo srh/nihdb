@@ -1,11 +1,11 @@
 // Yes, we have a "utilities" file...
 // NOTE: Let's reorganize this code later.
 
-
-use std::collections::Bound;
 use std;
+use std::collections::Bound;
 
 pub type Result<T> = std::result::Result<T, Box<std::error::Error>>;
+// The type of keys and values.
 pub type Buf = Vec<u8>;
 
 #[derive(Clone)]
@@ -35,13 +35,3 @@ pub enum Mutation {
     Set(Buf),
     Delete,
 }
-
-// NOTE: Avoid copying out whole String for key
-pub trait MutationIterator {
-    fn current_key(&self) -> Result<Option<Buf>>;
-    // NOTE: Collapse this Option into the Result, since None is caused by bad
-    // API usage.
-    fn current_value(&self) -> Result<Option<Mutation>>;
-    fn step(&mut self) -> Result<()>;
-}
-

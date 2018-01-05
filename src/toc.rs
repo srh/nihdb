@@ -1,11 +1,12 @@
+extern crate crc;
+
+use encoding::*;
+use util::*;
+
 use std;
 use std::collections::*;
 use std::io::*;
-use encoding::*;
-use util::*;
 use std::result::Result;
-
-extern crate crc;
 
 /* toc file format:
 
