@@ -1,7 +1,6 @@
 use util::*;
 
-// NOTE: Handle overflow and be generic w.r.t. int types.
-pub fn encode_uint(v: &mut Vec<u8>, mut n: u64) {
+pub fn encode_uvarint(v: &mut Vec<u8>, mut n: u64) {
     while n >= 128 {
         v.push((128 | (n & 127)) as u8);
         n >>= 7;
@@ -9,16 +8,17 @@ pub fn encode_uint(v: &mut Vec<u8>, mut n: u64) {
     v.push(n as u8);
 }
 
-pub fn decode_uint(v: &[u8], pos: &mut usize) -> Option<u64> {
+pub fn decode_uvarint(v: &[u8], pos: &mut usize) -> Option<u64> {
     let mut n: u64 = 0;
+    let mut shift: u32 = 0;
     while *pos < v.len() {
-        let b = v[*pos];
+        let b: u8 = v[*pos];
+        println!("decoded byte {}", b);
         *pos += 1;
-        if b < 128 {
-            return Some(n | (b as u64));
-        } else {
-            n <<= 7;
-            n |= (b & 127) as u64;
+        n |= ((b & 127) as u64) << shift;
+        shift += 7;
+        if 0 == (b & 128) {
+            return Some(n);
         }
     }
     return None;
@@ -74,12 +74,12 @@ pub fn decode_u32(v: &[u8], pos: &mut usize) -> Option<u32> {
 }
 
 pub fn encode_str(v: &mut Vec<u8>, b: &[u8]) {
-    encode_uint(v, b.len() as u64);
+    encode_uvarint(v, b.len() as u64);
     v.extend_from_slice(b);
 }
 
 pub fn observe_str<'a>(v: &'a [u8], pos: &mut usize) -> Option<&'a [u8]> {
-    let length: usize = try_into_size(decode_uint(v, pos)?)?;
+    let length: usize = try_into_size(decode_uvarint(v, pos)?)?;
     if v.len() - *pos < length {
         return None;
     }
@@ -106,13 +106,21 @@ mod tests {
         assert_eq!(v.len(), pos);
     }
 
+    fn help_test_uvarint(num: u64) {
+        let mut v = Vec::<u8>::new();
+        super::encode_uvarint(&mut v, num);
+        let mut pos: usize = 0;
+        assert_eq!(Some(num), super::decode_uvarint(&v, &mut pos));
+        assert_eq!(v.len(), pos);
+    }
+
     #[test]
     fn uint() {
-        let mut v = Vec::<u8>::new();
-        let num: u64 = 37;
-        super::encode_uint(&mut v, num);
-        let mut pos: usize = 0;
-        assert_eq!(Some(num), super::decode_uint(&v, &mut pos));
-        assert_eq!(v.len(), pos);
+        help_test_uvarint(0);
+        help_test_uvarint(37);
+        help_test_uvarint(127);
+        help_test_uvarint(128);
+        help_test_uvarint(137);
+        help_test_uvarint(12345678);
     }
 }

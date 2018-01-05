@@ -82,19 +82,19 @@ fn add_table(toc: &mut TOC, table_info: TableInfo) {
 }
 
 fn encode_table_info(v: &mut Vec<u8>, ti: &TableInfo) {
-    encode_uint(v, ti.id);
-    encode_uint(v, ti.level);
-    encode_uint(v, ti.keys_offset);
-    encode_uint(v, ti.file_size);
+    encode_uvarint(v, ti.id);
+    encode_uvarint(v, ti.level);
+    encode_uvarint(v, ti.keys_offset);
+    encode_uvarint(v, ti.file_size);
     encode_str(v, &ti.smallest_key);
     encode_str(v, &ti.biggest_key);
 }
 
 fn decode_table_info(buf: &[u8], pos: &mut usize) -> Option<TableInfo> {
-    let id: u64 = decode_uint(&buf, pos)?;
-    let level: u64 = decode_uint(&buf, pos)?;
-    let keys_offset: u64 = decode_uint(&buf, pos)?;
-    let file_size: u64 = decode_uint(&buf, pos)?;
+    let id: u64 = decode_uvarint(&buf, pos)?;
+    let level: u64 = decode_uvarint(&buf, pos)?;
+    let keys_offset: u64 = decode_uvarint(&buf, pos)?;
+    let file_size: u64 = decode_uvarint(&buf, pos)?;
     let smallest_key: Buf = decode_str(&buf, pos)?;
     let biggest_key: Buf = decode_str(&buf, pos)?;
     return Some(TableInfo{
@@ -110,12 +110,12 @@ fn decode_table_info(buf: &[u8], pos: &mut usize) -> Option<TableInfo> {
 fn encode_entry(ent: &Entry) -> Vec<u8> {
     let mut v = Vec::<u8>::new();
 
-    encode_uint(&mut v, ent.removals.len() as u64);
+    encode_uvarint(&mut v, ent.removals.len() as u64);
     for &table in &ent.removals {
-        encode_uint(&mut v, table);
+        encode_uvarint(&mut v, table);
     }
 
-    encode_uint(&mut v, ent.additions.len() as u64);
+    encode_uvarint(&mut v, ent.additions.len() as u64);
     for ref table_info in &ent.additions {
         encode_table_info(&mut v, &table_info);
     }
@@ -144,14 +144,14 @@ fn decode_entry(buf: &[u8], pos: &mut usize) -> Option<Entry> {
         return None;
     }
 
-    let num_removals: usize = try_into_size(decode_uint(&buf, pos)?)?;
+    let num_removals: usize = try_into_size(decode_uvarint(&buf, pos)?)?;
     let mut removals = Vec::<TableId>::new();
     for _ in 0..num_removals {
-        let table: TableId = decode_uint(&buf, pos)?;
+        let table: TableId = decode_uvarint(&buf, pos)?;
         removals.push(table);
     }
 
-    let num_additions: usize = try_into_size(decode_uint(&buf, pos)?)?;
+    let num_additions: usize = try_into_size(decode_uvarint(&buf, pos)?)?;
     let mut additions = Vec::<TableInfo>::new();
     for _ in 0..num_additions {
         additions.push(decode_table_info(&buf, pos)?);

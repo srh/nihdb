@@ -109,8 +109,8 @@ impl TableBuilder {
         let value_offset = self.values_buf.len() as u64;
         encode_mutation(&mut self.values_buf, value);
         let value_length = self.values_buf.len() as u64 - value_offset;
-        encode_uint(&mut self.keys_buf, value_offset);
-        encode_uint(&mut self.keys_buf, value_length);
+        encode_uvarint(&mut self.keys_buf, value_offset);
+        encode_uvarint(&mut self.keys_buf, value_length);
         encode_str(&mut self.keys_buf, key);
     }
 
@@ -239,9 +239,9 @@ impl TableKeysIterator {
     }
 
     fn decode_key<'a>(keys: &'a RcRef<Vec<u8>, [u8]>, pos: &mut usize) -> Result<(&'a [u8], u64, u64)> {
-        let value_offset: u64 = decode_uint(keys, pos)
+        let value_offset: u64 = decode_uvarint(keys, pos)
             .or_err("could not decode value_offset")?;
-        let value_length: u64 = decode_uint(keys, pos)
+        let value_length: u64 = decode_uvarint(keys, pos)
             .or_err("could not decode value_length")?;
         let key: &[u8] = observe_str(&*keys, pos).or_err("cannot decode key")?;
         return Ok((key, value_offset, value_length));
