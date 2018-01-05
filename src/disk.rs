@@ -340,11 +340,11 @@ impl TableIterator {
 }
 
 impl MutationIterator for TableIterator {
-    fn current_key(&self) -> Result<Option<Buf>> {
+    fn current_key(&mut self) -> Result<Option<Buf>> {
         return self.keys_iter.current_key().map(|x| x.map(|(k, _, _)| k.to_vec()));
     }
 
-    fn current_value(&self) -> Result<Option<Mutation>> {
+    fn current_value(&mut self) -> Result<Mutation> {
         if let Some((_, value_offset, value_length)) = self.keys_iter.current_key()? {
             let value_rel_offset: u64 = value_offset - self.offset_of_values_buf;
             let value_rel_offset = try_into_size(value_rel_offset).or_err("value_rel_offset not size")?;
@@ -358,9 +358,9 @@ impl MutationIterator for TableIterator {
             if pos != value_length {
                 Err(RihError::new("mutation decoded too small"))?;  // NOTE dedup with iterate_table, etc
             }
-            return Ok(Some(value));
+            return Ok(value);
         }
-        return Ok(None);
+        return Err(Box::new(RihError::new("current_value called on empty TableIterator")));
     }
 
     fn step(&mut self) -> Result<()> {

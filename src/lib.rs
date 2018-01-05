@@ -224,7 +224,7 @@ impl Store {
                 let mut builder = TableBuilder::new();
                 'inner: loop {
                     if let Some(key) = iter.current_key()? {
-                        let mutation = iter.current_value()?.expect("mutation given key in relevel");
+                        let mutation = iter.current_value()?;
                         builder.add_mutation(&key, &mutation);
                         iter.step()?;
                         if builder.file_size() > self.threshold {
@@ -424,14 +424,29 @@ impl Store {
                     self.add_table_iter_to_iters(&mut iters, *table_id, &interval.lower)?;
                 }
             } else {
+                let mut table_infos: Vec<&'a TableInfo> = Vec::new();
+
                 // NOTE: We should iterate in order. Order doesn't matter for
                 // now because it describes key precedence.
                 for table_id in table_ids.iter() {
                     let table_info: &TableInfo = self.toc.table_infos.get(table_id).expect("valid toc in range");
                     if Store::table_overlaps_interval(table_info, interval) {
-                        self.add_table_iter_to_iters(&mut iters, *table_id, &interval.lower)?;
+                        table_infos.push(table_info);
                     }
                 }
+
+                let interval = interval.clone();
+                let mut ti_index = 0;
+                iters.push(Box::new(ConcatIterator::<'a>::make(Box::new(move || {
+                    if ti_index == table_infos.len() {
+                        None
+                    } else {
+                        // TODO: Error handling of the Result here.
+                        let ti: &TableInfo = table_infos[ti_index];
+                        ti_index += 1;
+                        Some(Box::new(TableIterator::make(&self.directory, ti, &interval).expect("TableIterator")))
+                    }
+                }))));                
             }
         }
 
@@ -447,7 +462,7 @@ impl Store {
                 if !below_upper_bound(&key, &iter.interval.upper) {
                     return Ok(None);
                 }
-                let mutation: Mutation = iter.iters.current_value()?.expect("a current_value");
+                let mutation: Mutation = iter.iters.current_value()?;
                 iter.iters.step()?;
                 match mutation {
                     Mutation::Set(value) => {

@@ -70,15 +70,15 @@ impl<'a> MemStoreIterator<'a> {
 }
 
 impl<'a> MutationIterator for MemStoreIterator<'a> {
-    fn current_key(&self) -> Result<Option<Buf>> {
+    fn current_key(&mut self) -> Result<Option<Buf>> {
         return Ok(self.current.map(|x| x.to_vec()));
     }
 
-    fn current_value(&self) -> Result<Option<Mutation>> {
+    fn current_value(&mut self) -> Result<Mutation> {
         if let Some(key) = self.current {
-            return Ok(self.memstore.lookup(key).map(|x| x.clone()));
+            return Ok(self.memstore.lookup(key).expect("invalid MemStoreIterator").clone());
         }
-        return Ok(None);
+        return Err(Box::new(RihError::new("current_value called on empty MemStoreIterator")));
     }
 
     fn step(&mut self) -> Result<()> {
