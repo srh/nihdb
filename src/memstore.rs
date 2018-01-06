@@ -69,6 +69,14 @@ impl<'a> MemStoreIterator<'a> {
     }
 }
 
+fn ref_bound(x: &Bound<Buf>) -> Bound<&[u8]> {
+    match x {
+        &Bound::Excluded(ref b) => Bound::Excluded(b),
+        &Bound::Included(ref b) => Bound::Included(b),
+        &Bound::Unbounded => Bound::Unbounded,
+    }
+}
+
 impl<'a> MutationIterator for MemStoreIterator<'a> {
     fn current_key(&mut self) -> Result<Option<Buf>> {
         return Ok(self.current.map(|x| x.to_vec()));
@@ -82,9 +90,10 @@ impl<'a> MutationIterator for MemStoreIterator<'a> {
     }
 
     fn step(&mut self) -> Result<()> {
-        // NOTE: Avoid having to clone the upper bound.
-        let lower_bound = Bound::Excluded(self.current.or_err("step past end")?.to_vec());
-        let mut range: Range<Buf, Mutation> = self.memstore.entries.range((lower_bound, self.upper_bound.clone()));
+        let lower_bound = Bound::Excluded(self.current.or_err("step past end")?);
+        let mut range: Range<Buf, Mutation> = self.memstore.entries.range::<[u8], (Bound<&[u8]>, Bound<&[u8]>)>(
+            (lower_bound, ref_bound(&self.upper_bound))
+        );
         if let Some((key, _)) = range.next() {
             self.current = Some(&key);
         } else {
