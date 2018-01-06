@@ -78,8 +78,8 @@ fn ref_bound(x: &Bound<Buf>) -> Bound<&[u8]> {
 }
 
 impl<'a> MutationIterator for MemStoreIterator<'a> {
-    fn current_key(&mut self) -> Result<Option<Buf>> {
-        return Ok(self.current.map(|x| x.to_vec()));
+    fn current_key(&self) -> Result<Option<&[u8]>> {
+        return Ok(self.current);
     }
 
     fn current_value(&mut self) -> Result<Mutation> {

@@ -223,7 +223,8 @@ impl Store {
             'outer: loop {
                 let mut builder = TableBuilder::new();
                 'inner: loop {
-                    if let Some(key) = iter.current_key()? {
+                    // NOTE: It would be nice to avoid cloning the key here.
+                    if let Some(key) = iter.current_key()?.map(|x| x.to_vec()) {
                         let mutation = iter.current_value()?;
                         builder.add_mutation(&key, &mutation);
                         iter.step()?;
@@ -446,7 +447,7 @@ impl Store {
                         ti_index += 1;
                         Some(Box::new(TableIterator::make(&self.directory, ti, &interval).expect("TableIterator")))
                     }
-                }))));                
+                }))?));
             }
         }
 
@@ -458,22 +459,24 @@ impl Store {
 
     pub fn next(&self, iter: &mut StoreIter) -> Result<Option<(Buf, Buf)>> {
         loop {
+            let keyvec: Vec<u8>;
             if let Some(key) = iter.iters.current_key()? {
-                if !below_upper_bound(&key, &iter.interval.upper) {
+                if !below_upper_bound(key, &iter.interval.upper) {
                     return Ok(None);
                 }
-                let mutation: Mutation = iter.iters.current_value()?;
-                iter.iters.step()?;
-                match mutation {
-                    Mutation::Set(value) => {
-                        return Ok(Some((key, value)));
-                    },
-                    Mutation::Delete => {
-                        continue;
-                    }
-                }
+                keyvec = key.to_vec();
             } else {
                 return Ok(None);
+            }
+            let mutation: Mutation = iter.iters.current_value()?;
+            iter.iters.step()?;
+            match mutation {
+                Mutation::Set(value) => {
+                    return Ok(Some((keyvec, value)));
+                },
+                Mutation::Delete => {
+                    continue;
+                }
             }
         }
     }

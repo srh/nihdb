@@ -340,8 +340,8 @@ impl TableIterator {
 }
 
 impl MutationIterator for TableIterator {
-    fn current_key(&mut self) -> Result<Option<Buf>> {
-        return self.keys_iter.current_key().map(|x| x.map(|(k, _, _)| k.to_vec()));
+    fn current_key(&self) -> Result<Option<&[u8]>> {
+        return self.keys_iter.current_key().map(|x| x.map(|(k, _, _)| k));
     }
 
     fn current_value(&mut self) -> Result<Mutation> {
