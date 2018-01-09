@@ -3,6 +3,7 @@ use std::iter::*;
 
 extern crate owning_ref;
 extern crate rand;
+extern crate libc;
 
 mod disk;
 use disk::*;
@@ -101,6 +102,16 @@ impl Store {
             return Ok(true);
         }
         return Ok(false);
+    }
+
+    pub fn sync(&mut self) -> Result<()> {
+        // NOTE: We could, instead, sync file by file.
+        use libc;
+        self.flush()?;
+        unsafe {
+            libc::sync();
+        }
+        return Ok(());
     }
 
     pub fn flush(&mut self) -> Result<()> {
@@ -705,4 +716,11 @@ mod tests {
         verify_big_kv(&mut ts);
     }
 
+    #[test]
+    fn sync() {
+        // Tests that sync generally works.
+        let mut ts = TestStore::create(100);
+        write_basic_kv(&mut ts);
+        ts.kv().sync().expect("sync to succeed");
+    }
 }
