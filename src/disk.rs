@@ -152,45 +152,6 @@ fn open_table_file(dir: &str, table_id: u64) -> Result<std::fs::File> {
     return Ok(f);
 }
 
-pub fn iterate_table(dir: &str, ti: &TableInfo, func: &mut FnMut(Buf, Mutation) -> ()) -> Result<()> {
-    let mut buf = Vec::<u8>::new();
-    {
-        let mut f: std::fs::File = open_table_file(dir, ti.id)?;
-        f.read_to_end(&mut buf)?;
-    }
-
-    if buf.len() < TAB_BACK_PADDING {
-        // NOTE: Should be impossible in TableInfo.
-        Err(RihError::new("table too short"))?;
-    }
-
-    let keys_end: usize = buf.len() - TAB_BACK_PADDING;
-    let keys_offset: usize = try_into_size(ti.keys_offset).or_err("keys_offset invalid")?;
-
-    let buf: RcRef<Vec<u8>, Vec<u8>> = RcRef::new(Rc::new(buf));
-    let keys_buf: RcRef<Vec<u8>, [u8]>
-        = buf.clone().try_map(|v| v.get(keys_offset..keys_end).or_err("bad keys interval"))?;
-    let value_buf: RcRef<Vec<u8>, [u8]>
-        = buf.try_map(|v| v.get(0..keys_offset).or_err("bad values interval"))?;
-    let mut iter = TableKeysIterator::whole_table(keys_buf);
-    while let Some((key, value_offset64, value_length64)) = iter.next_key()? {
-        // NOTE: Duplicate code on this conversion.
-        let value_offset = try_into_size(value_offset64).or_err("value_offset not size")?;
-        let value_length = try_into_size(value_length64).or_err("value_length not size")?;
-        let value_slice = value_buf.get(value_offset..value_offset + value_length)
-            .or_err("value has improper slice")?;
-        
-        let mut pos: usize = 0;
-        let value: Mutation = decode_mutation(value_slice, &mut pos).or_err("cannot decode mutation")?;
-        if pos != value_length {
-            Err(RihError::new("mutation decoded to small"))?;
-        }
-        func(key.to_vec(), value);
-    }
-
-    return Ok(());
-}
-
 // NOTE: We'll want to use pread.
 fn read_exact(f: &mut std::fs::File, offset: u64, length: usize) -> Result<Vec<u8>> {
     // NOTE: Can we use unsafe to get uninitialized buf

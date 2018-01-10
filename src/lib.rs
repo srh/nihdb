@@ -47,16 +47,7 @@ impl Store {
         // NOTE: Clean up optional chaining.
 
         let (toc_file, toc) = read_toc(dir).expect("read_toc");
-        let mut ms = MemStore::new();
-        for fileno in 0..toc.next_table_id {
-            if let Some(table_info) = toc.table_infos.get(&fileno) {
-                iterate_table(dir, table_info, &mut |key: Buf, value: Mutation| {
-                    ms.apply(key, value);
-                })?;
-            }
-        }
-
-        return Ok(Store::make_existing(threshold, dir.to_string(), toc_file, toc, ms));
+        return Ok(Store::make_existing(threshold, dir.to_string(), toc_file, toc, MemStore::new()));
     }
 
     pub fn make(threshold: usize, directory: String, toc_file: std::fs::File, toc: TOC) -> Store {
