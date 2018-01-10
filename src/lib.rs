@@ -4,6 +4,7 @@ use std::iter::*;
 extern crate owning_ref;
 extern crate rand;
 extern crate libc;
+extern crate fnv;
 
 mod disk;
 use disk::*;

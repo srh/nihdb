@@ -3,6 +3,7 @@ extern crate crc;
 use encoding::*;
 use util::*;
 
+use fnv;
 use std;
 use std::collections::*;
 use std::io::*;
@@ -27,7 +28,7 @@ pub type LevelNumber = u64;
 
 // NOTE: We should track size of garbage data in TOC and occasionally rewrite from scratch.
 pub struct TOC {
-    pub table_infos: BTreeMap<TableId, TableInfo>,
+    pub table_infos: fnv::FnvHashMap<TableId, TableInfo>,
     // NOTE: We'll want levels (besides zero) to be organized by key order.
     pub level_infos: BTreeMap<LevelNumber, BTreeSet<TableId>>,
     pub next_table_id: u64,
@@ -180,7 +181,7 @@ pub fn read_toc(dir: &str) -> Option<(std::fs::File, TOC)> {
     f.read_to_end(&mut buf).expect("read_to_end toc");  // NOTE error handling
 
     let mut toc = TOC{
-        table_infos: BTreeMap::new(),
+        table_infos: fnv::FnvHashMap::default(),
         level_infos: BTreeMap::new(),
         next_table_id: 0,
     };
