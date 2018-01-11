@@ -2,6 +2,7 @@ extern crate crc;
 
 use encoding::*;
 use util::*;
+use error::*;
 
 use fnv;
 use std;
@@ -173,6 +174,47 @@ fn process_entry(toc: &mut Toc, entry: Entry) {
     }
 }
 
+fn parse_tablefile_name(name: &str) -> Option<TableId> {
+    if !name.ends_with(".tab") {
+        return None;
+    }
+    let frontpart: &str = name.split_at(name.len() - 4).0;
+    if let Some(x) = frontpart.parse::<u64>().ok() {
+        // Multiple strings ("1", "01", "001", ...) can parse to the same
+        // integer, so double-check that this is truly the right table file.
+        if table_filename(x) == name {
+            return Some(x);
+        }
+    }
+    return None;
+}
+
+// Returns map of table id to file size.
+fn read_dir_tables(dir: &str) -> Result<fnv::FnvHashMap<TableId, u64>> {
+    let mut ret = fnv::FnvHashMap::default();
+    for entry_result in std::fs::read_dir(dir)? {
+        let ent = entry_result?;
+        // Just looking for valid tab files, so we merely ignore non-unicode file names.
+        if let Some(filename) = ent.file_name().to_str() {
+            if let Some(table_id) = parse_tablefile_name(filename) {
+                let m = ent.metadata()?;
+                if !m.is_file() {
+                    Err(RihError::new("non-file table file name"))?;
+                }
+                let result = ret.insert(table_id, m.len());
+                assert!(result.is_none());
+            }
+        }
+    }
+    return Ok(ret);
+}
+
+fn validate_toc(toc: &Toc, dirent_tables: &fnv::FnvHashMap<TableId, u64>) -> bool {
+    return toc.table_infos.iter().all(|(id, info)|
+        dirent_tables.get(id).map(|x| *x) == Some(info.file_size)
+    );
+}
+
 pub fn read_toc(dir: &str) -> Result<(std::fs::File, Toc)> {
     let mut f = std::fs::OpenOptions::new().read(true).append(true)
         .open(toc_filename(dir))?;
@@ -192,10 +234,17 @@ pub fn read_toc(dir: &str) -> Result<(std::fs::File, Toc)> {
             process_entry(&mut toc, entry);
         } else {
             f.set_len(savepos as u64)?;
+            // NOTE: It would be decent to seek to end (instead of past end),
+            // even though not strictly necessary because we opened using
+            // append(true).
             return Ok((f, toc));
         }
     }
 
+    let dirent_tables: fnv::FnvHashMap<TableId, u64> = read_dir_tables(dir)?;
+    if !validate_toc(&toc, &dirent_tables) {
+        return Err(Box::new(RihError::new("invalid toc")));
+    }
     return Ok((f, toc));
 }
 

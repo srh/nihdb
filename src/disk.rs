@@ -131,10 +131,6 @@ impl TableBuilder {
     }
 }
 
-pub fn table_filepath(dir: &str, table_id: u64) -> String {
-    return format!("{}/{}.tab", dir, table_id);
-}
-
 // Returns keys_offset, file_size, smallest key, biggest key.
 pub fn flush_to_disk<'a>(dir: &str, table_id: u64, m: &'a MemStore) -> Result<(u64, u64, Buf, Buf)> {
     assert!(!m.entries.is_empty());

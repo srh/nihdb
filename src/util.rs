@@ -30,6 +30,9 @@ pub fn above_lower_bound(x: &[u8], bound: &Bound<Buf>) -> bool {
     }
 }
 
+pub fn table_filename(table_id: u64) -> String { format!("{}.tab", table_id) }
+pub fn table_filepath(dir: &str, table_id: u64) -> String { format!("{}/{}.tab", dir, table_id) }
+
 #[derive(Debug, Clone)]
 pub enum Mutation {
     Set(Buf),
