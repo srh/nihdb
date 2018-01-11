@@ -25,7 +25,7 @@ pub struct Store {
     threshold: usize,
     directory: String,
     toc_file: std::fs::File,
-    toc: TOC,
+    toc: Toc,
 }
 
 pub struct StoreIter<'a> {
@@ -46,11 +46,11 @@ impl Store {
         return Ok(Store::make_existing(threshold, dir.to_string(), toc_file, toc, MemStore::new()));
     }
 
-    pub fn make(threshold: usize, directory: String, toc_file: std::fs::File, toc: TOC) -> Store {
+    pub fn make(threshold: usize, directory: String, toc_file: std::fs::File, toc: Toc) -> Store {
         return Store::make_existing(threshold, directory, toc_file, toc, MemStore::new());
     }
 
-    fn make_existing(threshold: usize, directory: String, toc_file: std::fs::File, toc: TOC, ms: MemStore) -> Store {
+    fn make_existing(threshold: usize, directory: String, toc_file: std::fs::File, toc: Toc, ms: MemStore) -> Store {
         return Store{
             memstores: vec![MemStore::new(), ms],
             threshold: threshold,
@@ -289,7 +289,7 @@ impl Store {
     }
 
     // NOTE: We'd like a better data structure for organizing a level's table by keys.
-    fn get_overlapping_tables(toc: &TOC, tables: &[TableInfo], level: LevelNumber) -> Vec<TableId> {
+    fn get_overlapping_tables(toc: &Toc, tables: &[TableInfo], level: LevelNumber) -> Vec<TableId> {
         if let Some(level_tables) = toc.level_infos.get(&level) {
             let mut ret: Vec<TableId> = Vec::new();
             for id in level_tables {

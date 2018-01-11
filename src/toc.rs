@@ -27,7 +27,7 @@ pub type TableId = u64;
 pub type LevelNumber = u64;
 
 // NOTE: We should track size of garbage data in TOC and occasionally rewrite from scratch.
-pub struct TOC {
+pub struct Toc {
     pub table_infos: fnv::FnvHashMap<TableId, TableInfo>,
     // NOTE: We'll want levels (besides zero) to be organized by key order.
     pub level_infos: BTreeMap<LevelNumber, BTreeSet<TableId>>,
@@ -63,14 +63,14 @@ pub fn create_toc(dir: &str) -> Result<std::fs::File> {
     return Ok(f);
 }
 
-fn remove_table(toc: &mut TOC, table_id: TableId) {
+fn remove_table(toc: &mut Toc, table_id: TableId) {
     let ti: TableInfo = toc.table_infos.remove(&table_id).expect("TOC table removal");
     let v: &mut BTreeSet<TableId> = toc.level_infos.get_mut(&ti.level).expect("TOC table removal level");
     let removed: bool = v.remove(&ti.id);
     assert!(removed);
 }
 
-fn add_table(toc: &mut TOC, table_info: TableInfo) {
+fn add_table(toc: &mut Toc, table_info: TableInfo) {
     let table_id = table_info.id;
     let level = table_info.level;
     let inserted: bool = toc.table_infos.insert(table_id, table_info).is_none();
@@ -163,7 +163,7 @@ fn decode_entry(buf: &[u8], pos: &mut usize) -> Option<Entry> {
     return Some(Entry{removals, additions});
 }
 
-fn process_entry(toc: &mut TOC, entry: Entry) {
+fn process_entry(toc: &mut Toc, entry: Entry) {
     // Process removals first -- maybe we'll remove+add for level-changing logic
     for table_id in entry.removals {
         remove_table(toc, table_id);
@@ -173,13 +173,13 @@ fn process_entry(toc: &mut TOC, entry: Entry) {
     }
 }
 
-pub fn read_toc(dir: &str) -> Result<(std::fs::File, TOC)> {
+pub fn read_toc(dir: &str) -> Result<(std::fs::File, Toc)> {
     let mut f = std::fs::OpenOptions::new().read(true).append(true)
         .open(toc_filename(dir))?;
     let mut buf = Vec::<u8>::new();
     f.read_to_end(&mut buf)?;
 
-    let mut toc = TOC{
+    let mut toc = Toc{
         table_infos: fnv::FnvHashMap::default(),
         level_infos: BTreeMap::new(),
         next_table_id: 0,
@@ -199,7 +199,7 @@ pub fn read_toc(dir: &str) -> Result<(std::fs::File, TOC)> {
     return Ok((f, toc));
 }
 
-pub fn append_toc(toc: &mut TOC, f: &mut std::fs::File, entry: Entry) -> Result<()> {
+pub fn append_toc(toc: &mut Toc, f: &mut std::fs::File, entry: Entry) -> Result<()> {
     let data: Vec<u8> = encode_entry(&entry);
     f.write_all(&data)?;
     process_entry(toc, entry);
