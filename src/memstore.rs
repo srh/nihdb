@@ -86,7 +86,7 @@ impl<'a> MutationIterator for MemStoreIterator<'a> {
         if let Some(key) = self.current {
             return Ok(self.memstore.lookup(key).expect("invalid MemStoreIterator").clone());
         }
-        return Err(Box::new(RihError::new("current_value called on empty MemStoreIterator")));
+        return rih_err("current_value called on empty MemStoreIterator");
     }
 
     fn step(&mut self) -> Result<()> {

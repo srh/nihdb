@@ -174,7 +174,7 @@ pub fn lookup_table(dir: &str, ti: &TableInfo, key: &[u8]) -> Result<Option<Muta
                 let mut pos: usize = 0;
                 let value: Mutation = decode_mutation(&value_buf, &mut pos).or_err("cannot decode mutation")?;
                 if pos != value_buf.len() {
-                    Err(RihError::new("mutation decoded too small"))?;
+                    return rih_err("mutation decoded too small");
                 }
                 return Ok(Some(value));
             },
@@ -313,11 +313,11 @@ impl MutationIterator for TableIterator {
             let mut pos: usize = 0;
             let value: Mutation = decode_mutation(sl, &mut pos).or_err("cannot decode mutation")?;
             if pos != value_length {
-                Err(RihError::new("mutation decoded too small"))?;  // NOTE dedup with iterate_table, etc
+                return rih_err("mutation decoded too small");
             }
             return Ok(value);
         }
-        return Err(Box::new(RihError::new("current_value called on empty TableIterator")));
+        return rih_err("current_value called on empty TableIterator");
     }
 
     fn step(&mut self) -> Result<()> {

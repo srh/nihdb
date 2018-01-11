@@ -2,7 +2,6 @@ extern crate crc;
 
 use encoding::*;
 use util::*;
-use error::*;
 
 use fnv;
 use std;
@@ -199,7 +198,7 @@ fn read_dir_tables(dir: &str) -> Result<fnv::FnvHashMap<TableId, u64>> {
             if let Some(table_id) = parse_tablefile_name(filename) {
                 let m = ent.metadata()?;
                 if !m.is_file() {
-                    Err(RihError::new("non-file table file name"))?;
+                    return rih_err("non-file table file name");
                 }
                 let result = ret.insert(table_id, m.len());
                 assert!(result.is_none());
@@ -243,7 +242,7 @@ pub fn read_toc(dir: &str) -> Result<(std::fs::File, Toc)> {
 
     let dirent_tables: fnv::FnvHashMap<TableId, u64> = read_dir_tables(dir)?;
     if !validate_toc(&toc, &dirent_tables) {
-        return Err(Box::new(RihError::new("invalid toc")));
+        return rih_err("invalid toc");
     }
     return Ok((f, toc));
 }

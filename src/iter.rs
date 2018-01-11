@@ -42,7 +42,7 @@ impl<'a> MutationIterator for MergeIterator<'a> {
         if let Some((i, _)) = smallest_front(&self) {
             return self.iters[i].current_value();
         } else {
-            return Err(Box::new(RihError::new("current_value called on empty MutationIterator")));
+            return rih_err("current_value called on empty MutationIterator");
         }
     }
     fn step(&mut self) -> Result<()> {
@@ -93,7 +93,7 @@ impl<'a> MutationIterator for ConcatIterator<'a> {
         if let Some(&mut (_, ref mut iter)) = self.current.as_mut() {
             return iter.current_value();
         } else {
-            return Err(Box::new(RihError::new("current_value called on empty ConcatIterator")));
+            return rih_err("current_value called on empty ConcatIterator");
         }
     }
     fn step(&mut self) -> Result<()> {
@@ -112,7 +112,7 @@ impl<'a> MutationIterator for ConcatIterator<'a> {
                 }
             }
         } else {
-            return Err(Box::new(RihError::new("step called on empty ConcatIterator")));
+            return rih_err("step called on empty ConcatIterator");
         }
         self.current = None;
         return Ok(());
