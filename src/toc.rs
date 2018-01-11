@@ -163,14 +163,19 @@ fn decode_entry(buf: &[u8], pos: &mut usize) -> Option<Entry> {
     return Some(Entry{removals, additions});
 }
 
-fn process_entry(toc: &mut Toc, entry: Entry) {
+fn process_entry(toc: &mut Toc, entry: Entry) -> fnv::FnvHashSet<TableId> {
+    let mut ret = fnv::FnvHashSet::<TableId>::default();
     // Process removals first -- maybe we'll remove+add for level-changing logic
     for table_id in entry.removals {
         remove_table(toc, table_id);
+        ret.insert(table_id);
     }
     for addition in entry.additions {
+        let table_id = addition.id;
         add_table(toc, addition);
+        ret.remove(&table_id);
     }
+    return ret;
 }
 
 fn parse_tablefile_name(name: &str) -> Option<TableId> {
@@ -230,7 +235,7 @@ pub fn read_toc(dir: &str) -> Result<(std::fs::File, Toc)> {
     while pos < buf.len() {
         let savepos = pos;
         if let Some(entry) = decode_entry(&buf, &mut pos) {
-            process_entry(&mut toc, entry);
+            let _ = process_entry(&mut toc, entry);
         } else {
             f.set_len(savepos as u64)?;
             // NOTE: It would be decent to seek to end (instead of past end),
@@ -247,9 +252,9 @@ pub fn read_toc(dir: &str) -> Result<(std::fs::File, Toc)> {
     return Ok((f, toc));
 }
 
-pub fn append_toc(toc: &mut Toc, f: &mut std::fs::File, entry: Entry) -> Result<()> {
+// Returns a list of table id's that can be removed.
+pub fn append_toc(toc: &mut Toc, f: &mut std::fs::File, entry: Entry) -> Result<fnv::FnvHashSet<TableId>> {
     let data: Vec<u8> = encode_entry(&entry);
     f.write_all(&data)?;
-    process_entry(toc, entry);
-    return Ok(());
+    return Ok(process_entry(toc, entry));
 }

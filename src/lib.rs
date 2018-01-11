@@ -262,8 +262,13 @@ impl Store {
                 removals: removals,
             };
 
-            append_toc(&mut self.toc, &mut self.toc_file, entry)?;
-            // NOTE: Delete old files when releveling.
+            // to_delete will be the same as 'removals' defined above, but this
+            // is more robust against tweaks to our logic (such as fine-grained
+            // treatment of non-overlapping tables in level 0).
+            let to_delete = append_toc(&mut self.toc, &mut self.toc_file, entry)?;
+            for table_id in to_delete {
+                std::fs::remove_file(table_filepath(&self.directory, table_id))?;
+            }
 
             return Ok(());
         }
