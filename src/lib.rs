@@ -36,18 +36,13 @@ pub struct StoreIter<'a> {
 impl Store {
     pub fn create(dir: &str) -> Result<()> {
         // NOTE: We'll want directory locking and such.
-        // NOTE: Pass errors up
-        std::fs::create_dir(dir).expect("create_dir");  // NOTE: Never use expect
-        create_toc(dir).expect("create_toc");
+        std::fs::create_dir(dir)?;
+        create_toc(dir)?;
         return Ok(());
     }
 
     pub fn open(dir: &str, threshold: usize) -> Result<Store> {
-        // NOTE: Review if we should error upon some of these error cases.
-        // NOTE: Better error handling
-        // NOTE: Clean up optional chaining.
-
-        let (toc_file, toc) = read_toc(dir).expect("read_toc");
+        let (toc_file, toc) = read_toc(dir)?;
         return Ok(Store::make_existing(threshold, dir.to_string(), toc_file, toc, MemStore::new()));
     }
 
@@ -67,7 +62,7 @@ impl Store {
     }
 
     pub fn insert(&mut self, key: &[u8], val: &[u8]) -> Result<bool> {
-        if !self.exists(key) {
+        if !self.exists(key)? {
             self.put(key, val)?;
             return Ok(true);
         }
@@ -75,7 +70,7 @@ impl Store {
     }
 
     pub fn replace(&mut self, key: &[u8], val: &[u8]) -> Result<bool> {
-        if self.exists(key) {
+        if self.exists(key)? {
             self.put(key, val)?;
             return Ok(true);
         }
@@ -88,7 +83,7 @@ impl Store {
     }
 
     pub fn remove(&mut self, key: &[u8]) -> Result<bool> {
-        if self.exists(key) {
+        if self.exists(key)? {
             self.memstores[0].apply(key.to_vec(), Mutation::Delete);
             self.consider_split()?;
             return Ok(true);
@@ -337,66 +332,65 @@ impl Store {
         return Ok(());
     }
 
-    pub fn exists(&mut self, key: &[u8]) -> bool {
+    pub fn exists(&mut self, key: &[u8]) -> Result<bool> {
         for store in self.memstores.iter() {
             if let Some(m) = store.lookup(key) {
-                return match m {
+                return Ok(match m {
                     &Mutation::Set(_) => true,
                     &Mutation::Delete => false,
-                };
+                });
             }
         }
-        // NOTE: We're still using a big fat memstore, so we only get to here with keys we
-        // never used.
+
         for (_level, table_ids) in self.toc.level_infos.iter() {
             // For level zero, we want to iterate tables in reverse order.
             for table_id in table_ids.iter().rev() {
                 let ti: &TableInfo = self.toc.table_infos.get(table_id).expect("invalid toc");
                 if key >= &ti.smallest_key && key <= &ti.biggest_key {
                     // NOTE: We'll want to use exists_table.
-                    let opt_mut = lookup_table(&self.directory, ti, key).unwrap();  // NOTE error handling
+                    let opt_mut = lookup_table(&self.directory, ti, key)?;
                     if let Some(m) = opt_mut {
-                        return match m {
+                        return Ok(match m {
                             Mutation::Set(_) => true,
                             Mutation::Delete => false,
-                        }
+                        });
                     }
                 }
 
             }
         }
 
-        return false;
+        return Ok(false);
     }
 
-    pub fn get(&mut self, key: &[u8]) -> Option<Buf> {
+    pub fn get(&mut self, key: &[u8]) -> Result<Option<Buf>> {
         for store in self.memstores.iter() {
             if let Some(m) = store.lookup(key) {
-                return match m {
+                return Ok(match m {
                     &Mutation::Set(ref x) => Some(x.clone()),
                     &Mutation::Delete => None,
-                }
+                });
             }
         }
-        // NOTE: We're still using a big fat memstore, so we only get to this code with keys we never used.
+
         for (_level, table_ids) in self.toc.level_infos.iter() {
             // For level zero, we want to iterate tables in reverse order.
             // NOTE: For other levels, we don't want to iterate at all.  Too much CPU.
             for table_id in table_ids.iter().rev() {
                 let ti: &TableInfo = self.toc.table_infos.get(table_id).expect("invalid toc");
                 if key >= &ti.smallest_key && key <= &ti.biggest_key {
-                    let opt_mut = lookup_table(&self.directory, ti, key).unwrap();  // NOTE error handling
+                    let opt_mut = lookup_table(&self.directory, ti, key)?;
                     if let Some(m) = opt_mut {
-                        return match m {
+                        return Ok(match m {
                             Mutation::Set(x) => Some(x),
                             Mutation::Delete => None,
-                        }
+                        });
                     }
                 }
             }
         }
 
-        return None;
+        return Ok(None);
     }
 
     fn add_table_iter_to_iters<'a>(
@@ -547,11 +541,11 @@ mod tests {
         let mut ts = TestStore::create(100);
         let kv = ts.kv();
         kv.put(b("foo"), b("Hey")).unwrap();
-        let x: Option<Buf> = kv.get(b("foo"));
+        let x: Option<Buf> = kv.get(b("foo")).unwrap();
         assert_eq!(Some(b("Hey").to_vec()), x);
-        assert!(kv.exists(b("foo")));
-        assert_eq!(None, kv.get(b("bar")));
-        assert!(!kv.exists(b("bar")));
+        assert!(kv.exists(b("foo")).unwrap());
+        assert_eq!(None, kv.get(b("bar")).unwrap());
+        assert!(!kv.exists(b("bar")).unwrap());
     }
 
     #[test]
@@ -577,12 +571,12 @@ mod tests {
 
         kv.put(b("a"), b("alpha")).unwrap();
         kv.put(b("a"), b("alpha-2")).unwrap();
-        assert_eq!(Some(b("alpha-2").to_vec()), kv.get(b("a")));
+        assert_eq!(Some(b("alpha-2").to_vec()), kv.get(b("a")).unwrap());
         let inserted: bool = kv.insert(b("a"), b("alpha-3")).unwrap();
         assert!(!inserted);
         let overwrote: bool = kv.replace(b("a"), b("alpha-4")).unwrap();
         assert!(overwrote);
-        assert_eq!(Some(b("alpha-4").to_vec()), kv.get(b("a")));
+        assert_eq!(Some(b("alpha-4").to_vec()), kv.get(b("a")).unwrap());
     }
 
     fn write_basic_kv(ts: &mut TestStore) {
@@ -634,7 +628,7 @@ mod tests {
         assert!(ts.close().is_some());
         ts.open(100);
         // This actually hits the disk, because the key has no reference in the memstores.
-        assert_eq!(None, ts.kv().get(b("bogus")));
+        assert_eq!(None, ts.kv().get(b("bogus")).unwrap());
     }
 
     fn big_key(num: u64) -> Buf { format!("{:08}", num).as_bytes().to_vec() }

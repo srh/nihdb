@@ -6,8 +6,8 @@ use util::*;
 use fnv;
 use std;
 use std::collections::*;
-use std::io::*;
-use std::result::Result;
+use std::io::Read;
+use std::io::Write;
 
 /* toc file format:
 
@@ -57,14 +57,13 @@ fn toc_filename(dir: &str) -> String {
     return format!("{}/toc", dir);
 }
 
-pub fn create_toc(dir: &str) -> Result<std::fs::File, std::io::Error> {
-    let f = std::fs::File::create(toc_filename(dir));
+pub fn create_toc(dir: &str) -> Result<std::fs::File> {
+    let f = std::fs::File::create(toc_filename(dir))?;
     // Nothing to write yet.
-    return f;
+    return Ok(f);
 }
 
 fn remove_table(toc: &mut TOC, table_id: TableId) {
-    // NOTE error handling
     let ti: TableInfo = toc.table_infos.remove(&table_id).expect("TOC table removal");
     let v: &mut BTreeSet<TableId> = toc.level_infos.get_mut(&ti.level).expect("TOC table removal level");
     let removed: bool = v.remove(&ti.id);
@@ -75,7 +74,7 @@ fn add_table(toc: &mut TOC, table_info: TableInfo) {
     let table_id = table_info.id;
     let level = table_info.level;
     let inserted: bool = toc.table_infos.insert(table_id, table_info).is_none();
-    assert!(inserted);  // NOTE error handling
+    assert!(inserted);
     let set: &mut BTreeSet<u64> = toc.level_infos.entry(level).or_insert_with(|| BTreeSet::<u64>::new());
     let inserted: bool = set.insert(table_id);
     assert!(inserted);
@@ -174,11 +173,11 @@ fn process_entry(toc: &mut TOC, entry: Entry) {
     }
 }
 
-pub fn read_toc(dir: &str) -> Option<(std::fs::File, TOC)> {
+pub fn read_toc(dir: &str) -> Result<(std::fs::File, TOC)> {
     let mut f = std::fs::OpenOptions::new().read(true).append(true)
-        .open(toc_filename(dir)).expect("open toc");  // NOTE error handling
+        .open(toc_filename(dir))?;
     let mut buf = Vec::<u8>::new();
-    f.read_to_end(&mut buf).expect("read_to_end toc");  // NOTE error handling
+    f.read_to_end(&mut buf)?;
 
     let mut toc = TOC{
         table_infos: fnv::FnvHashMap::default(),
@@ -192,15 +191,15 @@ pub fn read_toc(dir: &str) -> Option<(std::fs::File, TOC)> {
         if let Some(entry) = decode_entry(&buf, &mut pos) {
             process_entry(&mut toc, entry);
         } else {
-            f.set_len(savepos as u64).expect("read_toc set len");  // NOTE error handling
-            return Some((f, toc));
+            f.set_len(savepos as u64)?;
+            return Ok((f, toc));
         }
     }
 
-    return Some((f, toc));
+    return Ok((f, toc));
 }
 
-pub fn append_toc(toc: &mut TOC, f: &mut std::fs::File, entry: Entry) -> Result<(), std::io::Error> {
+pub fn append_toc(toc: &mut TOC, f: &mut std::fs::File, entry: Entry) -> Result<()> {
     let data: Vec<u8> = encode_entry(&entry);
     f.write_all(&data)?;
     process_entry(toc, entry);
