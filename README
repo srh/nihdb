@@ -7,5 +7,14 @@ A work in progress.  Run "cargo test".
 Its license right now is AGPLv3-only, because I don't feel like thinking about
 it.  If you ask nicely, I might change it.
 
-Right now this is a very simple LSM-tree storage library.  It doesn't cache any
-data in memory and has no crash resistance.
+Right now this is a very simple LSM-tree storage library.  Here's why
+you shouldn't use it:
+
+  - It has no crash resistance
+  - It doesn't use bloom filters
+  - It doesn't use compression
+  - It has some inefficient implementations
+
+Here's why you should use it:
+
+  - It's simple and correct
