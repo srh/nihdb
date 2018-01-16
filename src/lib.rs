@@ -438,6 +438,8 @@ impl Store {
                     }
                 }
 
+                table_infos.sort_unstable_by(|x, y| x.smallest_key.cmp(&y.smallest_key));
+
                 let interval = interval.clone();
                 let mut ti_index = 0;
                 iters.push(Box::new(ConcatIterator::<'a>::make(Box::new(move || {
@@ -586,7 +588,7 @@ mod tests {
 
     fn write_basic_kv(ts: &mut TestStore) {
         let kv = ts.kv();
-        for i in 0..102 {
+        for i in (0..102).rev() {
             kv.put(b(&i.to_string()), b(&format!("value-{}", i.to_string()))).unwrap();
         }
         // Remove one, so that we test Delete entries really do override Set entries.
