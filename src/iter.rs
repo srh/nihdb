@@ -1,7 +1,11 @@
 use error::*;
 use util::*;
 
-// NOTE: Avoid copying out whole String for key
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Direction {
+    Forward, Backward
+}
+
 pub trait MutationIterator {
     fn current_key(&self) -> Result<Option<&[u8]>>;
     fn current_value(&mut self) -> Result<Mutation>;
@@ -13,45 +17,57 @@ pub struct MergeIterator<'a> {
     iters: Vec<Box<MutationIterator + 'a>>,
     // NOTE: This could be a priority queue.
     iters_front: Vec<Option<Buf>>,
+    direction: Direction,
 }
 
-fn smallest_front<'a>(iter: &'a MergeIterator) -> Option<(usize, &'a [u8])> {
-    return iter.iters_front.iter().enumerate()
-        .filter_map(|(i, opt_key)| opt_key.as_ref().map(|k: &'a Vec<u8>| (i, k.as_ref())))
-        .min_by_key(|&(_, k)| k);
+fn frontmost_front<'a>(iter: &'a MergeIterator) -> Option<(usize, &'a [u8])> {
+    let ixkeys = iter.iters_front.iter().enumerate()
+        .filter_map(|(i, opt_key)| opt_key.as_ref().map(|k: &'a Vec<u8>| (i, k.as_ref())));
+    if let Direction::Forward = iter.direction {
+        return ixkeys.min_by_key(|&(_, k)| k);
+    } else {
+        // We want the first maximal element to be returned, not the last.  So we add a tie breaker.
+        // (min_by_key returns the first, so we didn't need a tie breaker for that case).
+        let n: usize = iter.iters_front.len();
+        return ixkeys.max_by_key(|&(i, k)| (k, n - i));
+    }
 }
 
 impl<'a> MergeIterator<'a> {
-    pub fn make(mut iters: Vec<Box<MutationIterator + 'a>>) -> Result<MergeIterator<'a>> {
+    pub fn make(mut iters: Vec<Box<MutationIterator + 'a>>, direction: Direction) -> Result<MergeIterator<'a>> {
         let mut iters_front = Vec::<Option<Buf>>::new();
         for it in iters.iter_mut() {
-            iters_front.push(it.current_key()?.map(|x| x.to_vec()));
+            iters_front.push(it.current_key()?.map(|x| {
+                x.to_vec()
+            }));
         }
         return Ok(MergeIterator{
             iters: iters,
             iters_front: iters_front,
+            direction: direction,
         });
     }
 }
 
 impl<'a> MutationIterator for MergeIterator<'a> {
     fn current_key(&self) -> Result<Option<&[u8]>> {
-        return Ok(smallest_front(&self).map(|(_, k)| k));
+        let ret = Ok(frontmost_front(&self).map(|(_, k)| k));
+        return ret;
     }
     fn current_value(&mut self) -> Result<Mutation> {
-        if let Some((i, _)) = smallest_front(&self) {
+        if let Some((i, _)) = frontmost_front(&self) {
             return self.iters[i].current_value();
         } else {
             return mk_err("current_value called on empty MutationIterator");
         }
     }
     fn step(&mut self) -> Result<()> {
-        let smallest: Buf = {
-            let (_, key) = smallest_front(&self).or_err("step MergeIterator too far")?;
+        let frontmost: Buf = {
+            let (_, key) = frontmost_front(&self).or_err("step MergeIterator too far")?;
             key.to_vec()  // NOTE: Sigh on the copying.  _Move_ it out of iters_front.
         };
         for i in 0..self.iters.len() {
-            if self.iters_front[i].as_ref() == Some(&smallest) {
+            if self.iters_front[i].as_ref() == Some(&frontmost) {
                 self.iters[i].step()?;
                 self.iters_front[i] = self.iters[i].current_key()?.map(|x| x.to_vec());
             }
@@ -87,7 +103,8 @@ impl<'a> ConcatIterator<'a> {
 
 impl<'a> MutationIterator for ConcatIterator<'a> {
     fn current_key(&self) -> Result<Option<&[u8]>> {
-        return Ok(self.current.as_ref().map(|&(ref key, _)| key as &[u8]));
+        let ret = Ok(self.current.as_ref().map(|&(ref key, _)| key as &[u8]));
+        return ret;
     }
     fn current_value(&mut self) -> Result<Mutation> {
         if let Some(&mut (_, ref mut iter)) = self.current.as_mut() {

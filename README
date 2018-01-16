@@ -13,6 +13,7 @@ you shouldn't use it:
   - It doesn't use bloom filters
   - It doesn't use compression
   - It has some inefficient implementations
+  - The file format won't be backwards compatible
 
 Here's why you should use it:
 

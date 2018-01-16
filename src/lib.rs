@@ -31,6 +31,7 @@ pub struct Store {
 pub struct StoreIter<'a> {
     interval: Interval<Buf>,
     iters: MergeIterator<'a>,
+    direction: Direction,
 }
 
 impl Store {
@@ -208,11 +209,11 @@ impl Store {
             // Add upper level's tables in 'tables' existing order (which is in order of precedence).
             // Order of lower level's tables doesn't matter, since they're non-overlapping.
             for table_id in tables.iter().chain(lower_overlapping_ids.iter()) {
-                let lower_bound = Bound::Unbounded;
-                self.add_table_iter_to_iters(&mut iters, *table_id, &lower_bound)?;
+                let interval = Interval{lower: Bound::Unbounded, upper: Bound::Unbounded};
+                self.add_table_iter_to_iters(&mut iters, *table_id, &interval, Direction::Forward)?;
             }
 
-            let mut iter = MergeIterator::make(iters)?;
+            let mut iter = MergeIterator::make(iters, Direction::Forward)?;
 
             // Now we've got a store iter.  Iterate the store iter, building a set of tables.
 
@@ -226,7 +227,7 @@ impl Store {
                         let mutation = iter.current_value()?;
                         builder.add_mutation(&key, &mutation);
                         iter.step()?;
-                        if builder.file_size() > self.threshold {
+                        if builder.lowerbound_file_size() > self.threshold {
                             break 'inner;
                         }
                     } else {
@@ -399,24 +400,23 @@ impl Store {
     }
 
     fn add_table_iter_to_iters<'a>(
-        &self, iters: &mut Vec<Box<MutationIterator + 'a>>, table_id: TableId, lower_bound: &Bound<Buf>)
-        -> Result<()> {
+        &self, iters: &mut Vec<Box<MutationIterator + 'a>>, table_id: TableId, interval: &Interval<Buf>,
+        direction: Direction
+    ) -> Result<()> {
         let ti: &TableInfo = self.toc.table_infos.get(&table_id).expect("invalid toc");
-        // NOTE: Don't clone the lower bound every freaking time.
-        let interval = Interval::<Buf>{lower: lower_bound.clone(), upper: Bound::Unbounded};
-        let iter = TableIterator::make(&self.directory, ti, &interval)?;
+        let iter = TableIterator::make(&self.directory, ti, interval, direction)?;
         iters.push(Box::new(iter));
         return Ok(());
     }
 
-    // NOTE: Add directional ranges (i.e. backwards range iteration).
-    // NOTE: If the StoreIter keeps self borrowed, it should hold a reference to self that we can use
-    // to iterate.
-    pub fn range<'a>(&'a self, interval: &Interval<Buf>) -> Result<StoreIter<'a>> {
+    // NOTE: We could also add un-ordered range queries.
+
+    pub fn range_directed<'a>(&'a self, interval: &Interval<Buf>, direction: Direction
+    ) -> Result<StoreIter<'a>> {
         // NOTE: Could short-circuit for empty/one-key interval.
         let mut iters: Vec<Box<MutationIterator + 'a>> = Vec::new();
         for store in self.memstores.iter() {
-            iters.push(Box::new(MemStoreIterator::<'a>::make(store, interval)));
+            iters.push(Box::new(MemStoreIterator::<'a>::make(store, interval, direction)));
         }
 
         for (level, table_ids) in self.toc.level_infos.iter() {
@@ -424,13 +424,12 @@ impl Store {
                 // Tables overlap, add them in reverse order.
                 for table_id in table_ids.iter().rev() {
                     // NOTE: We could check if the intervals actually overlap.
-                    self.add_table_iter_to_iters(&mut iters, *table_id, &interval.lower)?;
+                    self.add_table_iter_to_iters(&mut iters, *table_id, &interval, direction)?;
                 }
             } else {
                 let mut table_infos: Vec<&'a TableInfo> = Vec::new();
 
-                // NOTE: We should iterate in order. Order doesn't matter for
-                // now because it describes key precedence.
+                // NOTE: Would be nice to have a data structure ordered by key.
                 for table_id in table_ids.iter() {
                     let table_info: &TableInfo = self.toc.table_infos.get(table_id).expect("valid toc in range");
                     if Store::table_overlaps_interval(table_info, interval) {
@@ -438,7 +437,10 @@ impl Store {
                     }
                 }
 
-                table_infos.sort_unstable_by(|x, y| x.smallest_key.cmp(&y.smallest_key));
+                table_infos.sort_unstable_by(|x, y| {
+                    let res = x.smallest_key.cmp(&y.smallest_key);
+                    match direction { Direction::Forward => res, Direction::Backward => res.reverse() }
+                });
 
                 let interval = interval.clone();
                 let mut ti_index = 0;
@@ -449,7 +451,7 @@ impl Store {
                         // TODO: Error handling of the Result here.
                         let ti: &TableInfo = table_infos[ti_index];
                         ti_index += 1;
-                        Some(Box::new(TableIterator::make(&self.directory, ti, &interval).expect("TableIterator")))
+                        Some(Box::new(TableIterator::make(&self.directory, ti, &interval, direction).expect("TableIterator")))
                     }
                 }))?));
             }
@@ -457,15 +459,30 @@ impl Store {
 
         return Ok(StoreIter{
             interval: interval.clone(),
-            iters: MergeIterator::make(iters)?,
+            iters: MergeIterator::make(iters, direction)?,
+            direction: direction,
         });
+    }
+
+    // NOTE: If the StoreIter keeps self borrowed, it should hold a reference to self that we can use
+    // to iterate.
+    pub fn range<'a>(&'a self, interval: &Interval<Buf>) -> Result<StoreIter<'a>> {
+        return self.range_directed(interval, Direction::Forward);
+    }
+
+    pub fn range_descending<'a>(&'a self, interval: &Interval<Buf>) -> Result<StoreIter<'a>> {
+        return self.range_directed(interval, Direction::Backward);
     }
 
     pub fn next(&self, iter: &mut StoreIter) -> Result<Option<(Buf, Buf)>> {
         loop {
             let keyvec: Vec<u8>;
             if let Some(key) = iter.iters.current_key()? {
-                if !below_upper_bound(key, &iter.interval.upper) {
+                let abandon = match iter.direction {
+                    Direction::Forward => !below_upper_bound(key, &iter.interval.upper),
+                    Direction::Backward => !above_lower_bound(key, &iter.interval.lower),
+                };
+                if abandon {
                     return Ok(None);
                 }
                 keyvec = key.to_vec();
@@ -564,11 +581,20 @@ mod tests {
         kv.put(b("c"), b("charlie")).unwrap();
         kv.put(b("d"), b("delta")).unwrap();
         let interval = Interval::<Buf>{lower: Bound::Unbounded, upper: Bound::Excluded(b("d").to_vec())};
-        let mut it: StoreIter = kv.range(&interval).expect("range");
-        assert_eq!(Some((b("a").to_vec(), b("alpha").to_vec())), kv.next(&mut it).unwrap());
-        assert_eq!(Some((b("b").to_vec(), b("beta").to_vec())), kv.next(&mut it).unwrap());
-        assert_eq!(Some((b("c").to_vec(), b("charlie").to_vec())), kv.next(&mut it).unwrap());
-        assert_eq!(None, kv.next(&mut it).unwrap());
+        {
+            let mut it: StoreIter = kv.range(&interval).expect("range");
+            assert_eq!(Some((b("a").to_vec(), b("alpha").to_vec())), kv.next(&mut it).unwrap());
+            assert_eq!(Some((b("b").to_vec(), b("beta").to_vec())), kv.next(&mut it).unwrap());
+            assert_eq!(Some((b("c").to_vec(), b("charlie").to_vec())), kv.next(&mut it).unwrap());
+            assert_eq!(None, kv.next(&mut it).unwrap());
+        }
+        {
+            let mut it: StoreIter = kv.range_descending(&interval).expect("range");
+            assert_eq!(Some((b("c").to_vec(), b("charlie").to_vec())), kv.next(&mut it).unwrap());
+            assert_eq!(Some((b("b").to_vec(), b("beta").to_vec())), kv.next(&mut it).unwrap());
+            assert_eq!(Some((b("a").to_vec(), b("alpha").to_vec())), kv.next(&mut it).unwrap());
+            assert_eq!(None, kv.next(&mut it).unwrap());
+        }
     }
 
     #[test]
@@ -599,13 +625,21 @@ mod tests {
 
     fn verify_basic_kv(ts: &mut TestStore) {
         let kv = ts.kv();
-        let interval = Interval::<Buf>{lower: Bound::Excluded(b("1").to_vec()), upper: Bound::Unbounded};
-        let mut it: StoreIter = kv.range(&interval).expect("range");
-        assert_eq!(Some((b("10").to_vec(), b("value-10").to_vec())), kv.next(&mut it).unwrap());
-        assert_eq!(Some((b("100").to_vec(), b("value-100").to_vec())), kv.next(&mut it).unwrap());
-        assert_eq!(Some((b("101").to_vec(), b("value-101").to_vec())), kv.next(&mut it).unwrap());
-        assert_eq!(Some((b("12").to_vec(), b("value-12").to_vec())), kv.next(&mut it).unwrap());
-        assert_eq!(Some((b("13").to_vec(), b("value-13").to_vec())), kv.next(&mut it).unwrap());
+        {
+            let interval = Interval::<Buf>{lower: Bound::Excluded(b("1").to_vec()), upper: Bound::Unbounded};
+            let mut it: StoreIter = kv.range(&interval).expect("range");
+            assert_eq!(Some((b("10").to_vec(), b("value-10").to_vec())), kv.next(&mut it).unwrap());
+            assert_eq!(Some((b("100").to_vec(), b("value-100").to_vec())), kv.next(&mut it).unwrap());
+            assert_eq!(Some((b("101").to_vec(), b("value-101").to_vec())), kv.next(&mut it).unwrap());
+            assert_eq!(Some((b("12").to_vec(), b("value-12").to_vec())), kv.next(&mut it).unwrap());
+            assert_eq!(Some((b("13").to_vec(), b("value-13").to_vec())), kv.next(&mut it).unwrap());
+        }
+        {
+            let interval = Interval::<Buf>{lower: Bound::Unbounded, upper: Bound::Excluded(b("99").to_vec())};
+            let mut it: StoreIter = kv.range_descending(&interval).expect("range descending");
+            assert_eq!(Some((b("98").to_vec(), b("value-98").to_vec())), kv.next(&mut it).unwrap());
+            assert_eq!(Some((b("97").to_vec(), b("value-97").to_vec())), kv.next(&mut it).unwrap());
+        }
     }
 
     #[test]
@@ -658,20 +692,39 @@ mod tests {
             lower: Bound::Included(big_key(low)),
             upper: Bound::Included(big_key(high)),
         };
-        let mut i = low;
-        if i % 2 == 1 {
-            i += 1;
+        {
+            let mut i = low;
+            if i % 2 == 1 {
+                i += 1;
+            }
+            let mut it: StoreIter = kv.range(&interval).expect("range");
+            while let Some((k, v)) = kv.next(&mut it).expect("next") {
+                assert_eq!(&big_key(i), &k);
+                assert_eq!(&big_value(i), &v);
+                i += 2;
+            }
+            if high % 2 == 0 {
+                assert_eq!(high + 2, i);
+            } else {
+                assert_eq!(high + 1, i);
+            }
         }
-        let mut it: StoreIter = kv.range(&interval).expect("range");
-        while let Some((k, v)) = kv.next(&mut it).expect("next") {
-            assert_eq!(&big_key(i), &k);
-            assert_eq!(&big_value(i), &v);
-            i += 2;
-        }
-        if high % 2 == 0 {
-            assert_eq!(high + 2, i);
-        } else {
-            assert_eq!(high + 1, i);
+        {
+            let mut i = high;
+            if i % 2 == 1 {
+                i -= 1;
+            }
+            let mut it: StoreIter = kv.range_descending(&interval).expect("range_descending");
+            while let Some((k, v)) = kv.next(&mut it).expect("next desc") {
+                assert_eq!(&big_key(i), &k);
+                assert_eq!(&big_value(i), &v);
+                i -= 2;
+            }
+            if low % 2 == 0 {
+                assert_eq!(low - 2, i);
+            } else {
+                assert_eq!(low - 1, i);
+            }
         }
     }
 

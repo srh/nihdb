@@ -1,5 +1,7 @@
 use util::*;
 
+// Format for varints:  Base-128, little-endian, [1][7bit] ... [1][7bit] [0][7bit]
+
 pub fn encode_uvarint(v: &mut Vec<u8>, mut n: u64) {
     while n >= 128 {
         v.push((128 | (n & 127)) as u8);
@@ -8,6 +10,7 @@ pub fn encode_uvarint(v: &mut Vec<u8>, mut n: u64) {
     v.push(n as u8);
 }
 
+// NOTE: Protect against overflow when decoding.
 pub fn decode_uvarint(v: &[u8], pos: &mut usize) -> Option<u64> {
     let mut n: u64 = 0;
     let mut shift: u32 = 0;
@@ -105,21 +108,28 @@ mod tests {
         assert_eq!(v.len(), pos);
     }
 
-    fn help_test_uvarint(num: u64) {
+    fn help_test_enc64(num: u64) {
         let mut v = Vec::<u8>::new();
         super::encode_uvarint(&mut v, num);
         let mut pos: usize = 0;
         assert_eq!(Some(num), super::decode_uvarint(&v, &mut pos));
         assert_eq!(v.len(), pos);
+
+        v.clear();
+        super::encode_u64(&mut v, num);
+        pos = 0;
+        assert_eq!(Some(num), super::decode_u64(&v, &mut pos));
+        assert_eq!(v.len(), pos);
+        assert_eq!(8, v.len());
     }
 
     #[test]
     fn uint() {
-        help_test_uvarint(0);
-        help_test_uvarint(37);
-        help_test_uvarint(127);
-        help_test_uvarint(128);
-        help_test_uvarint(137);
-        help_test_uvarint(12345678);
+        help_test_enc64(0);
+        help_test_enc64(37);
+        help_test_enc64(127);
+        help_test_enc64(128);
+        help_test_enc64(137);
+        help_test_enc64(12345678);
     }
 }

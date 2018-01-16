@@ -42,8 +42,15 @@ impl MemStore {
     }
 
     pub fn first_in_range(&self, interval: &Interval<Buf>) -> Option<&[u8]> {
+        // NOTE: no need for bounds cloning
         let mut range: Range<Buf, Mutation> = self.entries.range((interval.lower.clone(), interval.upper.clone()));
         return range.next().map(|(key, _)| key as &[u8]);
+    }
+
+    pub fn last_in_range(&self, interval: &Interval<Buf>) -> Option<&[u8]> {
+        // NOTE: no need for bounds cloning
+        let mut range: Range<Buf, Mutation> = self.entries.range((interval.lower.clone(), interval.upper.clone()));
+        return range.next_back().map(|(key, _)| key as &[u8]);
     }
 
     pub fn new() -> MemStore {
@@ -56,16 +63,26 @@ pub struct MemStoreIterator<'a> {
     // (Why not use a BTreeMap iterator?  Because in the future we'll
     // have other stuff modifying... I guess.  Pre-architecting.)
     current: Option<&'a [u8]>,
-    upper_bound: Bound<Buf>,
+    bound: Bound<Buf>,
+    direction: Direction,
 }
 
 impl<'a> MemStoreIterator<'a> {
-    pub fn make(ms: &'a MemStore, interval: &Interval<Buf>) -> MemStoreIterator<'a> {
-        return MemStoreIterator{
-            memstore: ms,
-            current: ms.first_in_range(interval),
-            upper_bound: interval.upper.clone(),
-        };
+    pub fn make(ms: &'a MemStore, interval: &Interval<Buf>, direction: Direction) -> MemStoreIterator<'a> {
+        return match direction {
+            Direction::Forward => MemStoreIterator{
+                memstore: ms,
+                current: ms.first_in_range(interval),
+                bound: interval.upper.clone(),
+                direction: direction,
+            },
+            Direction::Backward => MemStoreIterator{
+                memstore: ms,
+                current: ms.last_in_range(interval),
+                bound: interval.lower.clone(),
+                direction: direction,
+            }
+        }
     }
 }
 
@@ -90,15 +107,30 @@ impl<'a> MutationIterator for MemStoreIterator<'a> {
     }
 
     fn step(&mut self) -> Result<()> {
-        let lower_bound = Bound::Excluded(self.current.or_err("step past end")?);
-        let mut range: Range<Buf, Mutation> = self.memstore.entries.range::<[u8], (Bound<&[u8]>, Bound<&[u8]>)>(
-            (lower_bound, ref_bound(&self.upper_bound))
-        );
-        if let Some((key, _)) = range.next() {
-            self.current = Some(&key);
-        } else {
-            self.current = None;
+        let current_bound = Bound::Excluded(self.current.or_err("step past end")?);
+        match self.direction {
+            Direction::Forward => {
+                let mut range: Range<Buf, Mutation> = self.memstore.entries.range::<[u8], (Bound<&[u8]>, Bound<&[u8]>)>(
+                    (current_bound, ref_bound(&self.bound))
+                );
+                if let Some((key, _)) = range.next() {
+                    self.current = Some(&key);
+                } else {
+                    self.current = None;
+                }
+                return Ok(());
+            }
+            Direction::Backward => {
+                let mut range: Range<Buf, Mutation> = self.memstore.entries.range::<[u8], (Bound<&[u8]>, Bound<&[u8]>)>(
+                    (ref_bound(&self.bound), current_bound)
+                );
+                if let Some((key, _)) = range.next_back() {
+                    self.current = Some(&key);
+                } else {
+                    self.current = None;
+                }
+                return Ok(());
+            }
         }
-        return Ok(());
     }
 }
