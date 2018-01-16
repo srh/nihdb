@@ -1,11 +1,10 @@
-RihDB
+NIHdb
 
 A simple single-threaded KV store, with read/write/range-get operations.
 
 A work in progress.  Run "cargo test".
 
-Its license right now is AGPLv3-only, because I don't feel like thinking about
-it.  If you ask nicely, I might change it.
+Its license right now is MIT.
 
 Right now this is a very simple LSM-tree storage library.  Here's why
 you shouldn't use it:

@@ -1,5 +1,5 @@
 [package]
-name = "rihdb"
+name = "nihdb"
 version = "0.1.0"
 authors = ["Sam Hughes <sam@samuelhughes.com>"]
 license = "MIT"
