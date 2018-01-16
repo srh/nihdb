@@ -149,7 +149,7 @@ impl Store {
                 // one which overlaps the fewest child tables.
                 // NOTE: A data structure for this would be nice.
                 let mut smallest_overlap = usize::max_value();
-                let mut smallest_overlap_table_id: TableId = 0;
+                let mut smallest_overlap_table_id: TableId = TableId(0);
 
                 for &id in table_ids.iter() {
                     // NOTE: Pass a slice to single TableInfo element without cloning.
@@ -239,7 +239,7 @@ impl Store {
                 }
 
                 // We've got a non-empty builder.  Flush it to disk.
-                let table_id = self.toc.next_table_id;
+                let table_id = TableId(self.toc.next_table_id);
                 self.toc.next_table_id += 1;
 
                 let mut f = std::fs::File::create(table_filepath(&self.directory, table_id))?;
@@ -322,7 +322,7 @@ impl Store {
         if ms.entries.is_empty() {
             return Ok(());
         }
-        let table_id = self.toc.next_table_id;
+        let table_id = TableId(self.toc.next_table_id);
         self.toc.next_table_id += 1;
         let (keys_offset, file_size, smallest, biggest) = flush_to_disk(&self.directory, table_id, &ms)?;
         let ti = TableInfo{

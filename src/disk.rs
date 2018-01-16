@@ -132,7 +132,7 @@ impl TableBuilder {
 }
 
 // Returns keys_offset, file_size, smallest key, biggest key.
-pub fn flush_to_disk<'a>(dir: &str, table_id: u64, m: &'a MemStore) -> Result<(u64, u64, Buf, Buf)> {
+pub fn flush_to_disk<'a>(dir: &str, table_id: TableId, m: &'a MemStore) -> Result<(u64, u64, Buf, Buf)> {
     assert!(!m.entries.is_empty());
     let mut builder = TableBuilder::new();
     
@@ -143,7 +143,7 @@ pub fn flush_to_disk<'a>(dir: &str, table_id: u64, m: &'a MemStore) -> Result<(u
     return builder.finish(&mut f);
 }
 
-fn open_table_file(dir: &str, table_id: u64) -> Result<std::fs::File> {
+fn open_table_file(dir: &str, table_id: TableId) -> Result<std::fs::File> {
     let f = std::fs::File::open(table_filepath(dir, table_id))?;
     return Ok(f);
 }

@@ -23,7 +23,7 @@ use std::io::Write;
 */
 
 // NOTE: Make these newtypes.
-pub type TableId = u64;
+
 pub type LevelNumber = u64;
 
 // NOTE: We should track size of garbage data in TOC and occasionally rewrite from scratch.
@@ -75,14 +75,14 @@ fn add_table(toc: &mut Toc, table_info: TableInfo) {
     let level = table_info.level;
     let inserted: bool = toc.table_infos.insert(table_id, table_info).is_none();
     assert!(inserted);
-    let set: &mut BTreeSet<u64> = toc.level_infos.entry(level).or_insert_with(|| BTreeSet::<u64>::new());
+    let set: &mut BTreeSet<TableId> = toc.level_infos.entry(level).or_insert_with(|| BTreeSet::<TableId>::new());
     let inserted: bool = set.insert(table_id);
     assert!(inserted);
-    toc.next_table_id = toc.next_table_id.max(table_id + 1);
+    toc.next_table_id = toc.next_table_id.max(table_id.0 + 1);
 }
 
 fn encode_table_info(v: &mut Vec<u8>, ti: &TableInfo) {
-    encode_uvarint(v, ti.id);
+    encode_uvarint(v, ti.id.0);
     encode_uvarint(v, ti.level);
     encode_uvarint(v, ti.keys_offset);
     encode_uvarint(v, ti.file_size);
@@ -98,7 +98,7 @@ fn decode_table_info(buf: &[u8], pos: &mut usize) -> Option<TableInfo> {
     let smallest_key: Buf = decode_str(&buf, pos)?;
     let biggest_key: Buf = decode_str(&buf, pos)?;
     return Some(TableInfo{
-        id: id,
+        id: TableId(id),
         level: level,
         keys_offset: keys_offset,
         file_size: file_size,
@@ -112,7 +112,7 @@ fn encode_entry(ent: &Entry) -> Vec<u8> {
 
     encode_uvarint(&mut v, ent.removals.len() as u64);
     for &table in &ent.removals {
-        encode_uvarint(&mut v, table);
+        encode_uvarint(&mut v, table.0);
     }
 
     encode_uvarint(&mut v, ent.additions.len() as u64);
@@ -147,7 +147,7 @@ fn decode_entry(buf: &[u8], pos: &mut usize) -> Option<Entry> {
     let num_removals: usize = try_into_size(decode_uvarint(&buf, pos)?)?;
     let mut removals = Vec::<TableId>::new();
     for _ in 0..num_removals {
-        let table: TableId = decode_uvarint(&buf, pos)?;
+        let table = TableId(decode_uvarint(&buf, pos)?);
         removals.push(table);
     }
 
@@ -186,8 +186,8 @@ fn parse_tablefile_name(name: &str) -> Option<TableId> {
     if let Some(x) = frontpart.parse::<u64>().ok() {
         // Multiple strings ("1", "01", "001", ...) can parse to the same
         // integer, so double-check that this is truly the right table file.
-        if table_filename(x) == name {
-            return Some(x);
+        if table_filename(TableId(x)) == name {
+            return Some(TableId(x));
         }
     }
     return None;
