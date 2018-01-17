@@ -1,3 +1,26 @@
+//! NihDB
+//!
+//! ```
+//! use nihdb::Store;
+//! let dir = "./testdir-nihdb/";
+//! Store::create(dir).unwrap();
+//! {
+//!     let mut store: Store = Store::open(dir, 2000000).unwrap();
+//!
+//!     store.put("some_key".as_bytes(), "Some Value".as_bytes()).unwrap();
+//!     match store.get("some_key".as_bytes()).unwrap() {
+//!         None => {
+//!             println!("Not found!");
+//!         },
+//!         Some(v) => {
+//!             println!("The value is {}", String::from_utf8(v).unwrap());
+//!         },
+//!     };
+//! }
+//!
+//! std::fs::remove_dir_all(dir).unwrap();
+//! ```
+
 use std::collections::Bound;
 use std::iter::*;
 
@@ -35,6 +58,7 @@ pub struct StoreIter<'a> {
 }
 
 impl Store {
+    /// Creates a new store in a new directory.
     pub fn create(dir: &str) -> Result<()> {
         // NOTE: We'll want directory locking and such.
         std::fs::create_dir(dir)?;
@@ -42,13 +66,12 @@ impl Store {
         return Ok(());
     }
 
+    /// Opens the store.
+    ///
+    /// `threshold` is an upper bound on the size of unflushed data.
     pub fn open(dir: &str, threshold: usize) -> Result<Store> {
         let (toc_file, toc) = read_toc(dir)?;
         return Ok(Store::make_existing(threshold, dir.to_string(), toc_file, toc, MemStore::new()));
-    }
-
-    pub fn make(threshold: usize, directory: String, toc_file: std::fs::File, toc: Toc) -> Store {
-        return Store::make_existing(threshold, directory, toc_file, toc, MemStore::new());
     }
 
     fn make_existing(threshold: usize, directory: String, toc_file: std::fs::File, toc: Toc, ms: MemStore) -> Store {
@@ -62,6 +85,8 @@ impl Store {
         }
     }
 
+    /// Inserts a key/value pair into the store if the key is not already present.
+    /// Returns true if an insertion happened.
     pub fn insert(&mut self, key: &[u8], val: &[u8]) -> Result<bool> {
         if !self.exists(key)? {
             self.put(key, val)?;
@@ -70,6 +95,8 @@ impl Store {
         return Ok(false);
     }
 
+    /// Replaces an existing key/value pair in the store.  If the key is not present,
+    /// does nothing and returns false.
     pub fn replace(&mut self, key: &[u8], val: &[u8]) -> Result<bool> {
         if self.exists(key)? {
             self.put(key, val)?;
@@ -78,11 +105,14 @@ impl Store {
         return Ok(false);
     }
 
+    /// Puts a key/value pair into the store, replacing the value if the key is
+    /// already present.  Compare to `insert` or `replace`.
     pub fn put(&mut self, key: &[u8], val: &[u8]) -> Result<()> {
         self.memstores[0].apply(key.to_vec(), Mutation::Set(val.to_vec()));
         return self.consider_split();
     }
 
+    /// Removes a key/value pair from the store. Returns true if the key was present.
     pub fn remove(&mut self, key: &[u8]) -> Result<bool> {
         if self.exists(key)? {
             self.memstores[0].apply(key.to_vec(), Mutation::Delete);
@@ -92,6 +122,8 @@ impl Store {
         return Ok(false);
     }
 
+    /// Ensures that all preceding write operations have been written
+    /// to disk (if you trust your kernel and your disk).
     pub fn sync(&mut self) -> Result<()> {
         // NOTE: We could, instead, sync file by file.
         use libc;
@@ -102,6 +134,7 @@ impl Store {
         return Ok(());
     }
 
+    /// Flushes any buffered write operations to disk.
     pub fn flush(&mut self) -> Result<()> {
         let ms: MemStore = self.memstores.remove(0);
 
@@ -114,7 +147,7 @@ impl Store {
         return Ok(());
     }
 
-    pub fn rebalance(&mut self) -> Result<()> {
+    fn rebalance(&mut self) -> Result<()> {
         if self.toc.level_infos.get(&0).map_or(false, |lz| lz.len() > 4) {
             // Do a releveling with all but the latest (highest numbered) table.
             let table_ids: Vec<TableId>
@@ -183,7 +216,7 @@ impl Store {
     // was more than one, they'd have non-overlapping key ranges.)
     fn relevel<'a>(&'a mut self, level: LevelNumber, tables: Vec<TableId>) -> Result<()> {
         assert!(if level == 0 { tables.len() > 0 } else { tables.len() == 1 });
-        
+
         // What to do:  Go to the next level, find which tables overlap.
         let table_infos: Vec<TableInfo>
             = tables.iter().map(|id| self.toc.table_infos.get(id).expect("toc valid in relevel").clone()).collect();
@@ -338,6 +371,7 @@ impl Store {
         return Ok(());
     }
 
+    /// Returns true if a key/value pair is present, for the given key.
     pub fn exists(&mut self, key: &[u8]) -> Result<bool> {
         for store in self.memstores.iter() {
             if let Some(m) = store.lookup(key) {
@@ -369,7 +403,10 @@ impl Store {
         return Ok(false);
     }
 
+    /// Gets the value for the specified key/value pair, or `None` if the key
+    /// does not exist.
     pub fn get(&mut self, key: &[u8]) -> Result<Option<Buf>> {
+        // NOTE: This doesn't need to be &_mut_ self, because using a StoreIter isn't.
         for store in self.memstores.iter() {
             if let Some(m) = store.lookup(key) {
                 return Ok(match m {
@@ -411,6 +448,8 @@ impl Store {
 
     // NOTE: We could also add un-ordered range queries.
 
+    /// Produces a store iterator for iterating the store over the given interval,
+    /// in the given direction.
     pub fn range_directed<'a>(&'a self, interval: &Interval<Buf>, direction: Direction
     ) -> Result<StoreIter<'a>> {
         // NOTE: Could short-circuit for empty/one-key interval.
@@ -465,14 +504,19 @@ impl Store {
 
     // NOTE: If the StoreIter keeps self borrowed, it should hold a reference to self that we can use
     // to iterate.
+
+    /// Creates a StoreIter for iterating forwards through the interval.
     pub fn range<'a>(&'a self, interval: &Interval<Buf>) -> Result<StoreIter<'a>> {
         return self.range_directed(interval, Direction::Forward);
     }
 
+    /// Creates a StoreIter for iterating backwards through the interval.
     pub fn range_descending<'a>(&'a self, interval: &Interval<Buf>) -> Result<StoreIter<'a>> {
         return self.range_directed(interval, Direction::Backward);
     }
 
+    /// Produces the next key/value pair from the StoreIter.  Returns None
+    /// to mark the end of iteration.
     pub fn next(&self, iter: &mut StoreIter) -> Result<Option<(Buf, Buf)>> {
         loop {
             let keyvec: Vec<u8>;
