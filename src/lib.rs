@@ -445,14 +445,13 @@ impl Store {
                 let interval = interval.clone();
                 let mut ti_index = 0;
                 iters.push(Box::new(ConcatIterator::<'a>::make(Box::new(move || {
-                    if ti_index == table_infos.len() {
+                    Ok(if ti_index == table_infos.len() {
                         None
                     } else {
-                        // TODO: Error handling of the Result here.
                         let ti: &TableInfo = table_infos[ti_index];
                         ti_index += 1;
-                        Some(Box::new(TableIterator::make(&self.directory, ti, &interval, direction).expect("TableIterator")))
-                    }
+                        Some(Box::new(TableIterator::make(&self.directory, ti, &interval, direction)?))
+                    })
                 }))?));
             }
         }

@@ -80,13 +80,14 @@ impl<'a> MutationIterator for MergeIterator<'a> {
 pub struct ConcatIterator<'a> {
     // (Current key, current iterator)
     current: Option<(Buf, Box<MutationIterator>)>,
-    next_gen: Box<FnMut() -> Option<Box<MutationIterator>> + 'a>,
+    next_gen: Box<FnMut() -> Result<Option<Box<MutationIterator>>> + 'a>,
 }
 
 impl<'a> ConcatIterator<'a> {
-    pub fn make(mut next_gen: Box<FnMut() -> Option<Box<MutationIterator>> + 'a>) -> Result<ConcatIterator<'a>> {
+    pub fn make(mut next_gen: Box<FnMut() -> Result<Option<Box<MutationIterator>>> + 'a>
+    ) -> Result<ConcatIterator<'a>> {
         loop {
-            if let Some(current) = (*next_gen)() {
+            if let Some(current) = (*next_gen)()? {
                 if let Some(key) = current.current_key()?.map(|x| x.to_vec()) {
                     return Ok(ConcatIterator{current: Some((key, current)), next_gen: next_gen});
                 }
@@ -121,7 +122,7 @@ impl<'a> MutationIterator for ConcatIterator<'a> {
                     tup.0 = k;
                     return Ok(());
                 } else {
-                    if let Some(iter) = (*self.next_gen)() {
+                    if let Some(iter) = (*self.next_gen)()? {
                         tup.1 = iter;
                     } else {
                         break;
