@@ -1,6 +1,7 @@
 extern crate crc;
 
 use encoding::*;
+use error::*;
 use util::*;
 
 use fnv;

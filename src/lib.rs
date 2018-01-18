@@ -33,6 +33,7 @@ mod disk;
 use disk::*;
 mod encoding;
 mod error;
+use error::*;
 mod iter;
 use iter::*;
 mod memstore;

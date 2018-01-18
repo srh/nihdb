@@ -1,12 +1,8 @@
 // Yes, we have a "utilities" file...
 // NOTE: Let's reorganize this code later.
 
-use error::*;
-
-use std;
 use std::collections::Bound;
 
-pub type Result<T> = std::result::Result<T, Box<std::error::Error>>;
 // The type of keys and values.
 pub type Buf = Vec<u8>;
 
@@ -37,10 +33,6 @@ pub fn above_lower_bound(x: &[u8], bound: &Bound<Buf>) -> bool {
 
 pub fn table_filename(table_id: TableId) -> String { format!("{}.tab", table_id.0) }
 pub fn table_filepath(dir: &str, table_id: TableId) -> String { format!("{}/{}.tab", dir, table_id.0) }
-
-pub fn mk_err<T>(msg: &str) -> Result<T> {
-    return Err(Box::new(Error::new(msg)));
-}
 
 #[derive(Debug, Clone)]
 pub enum Mutation {
