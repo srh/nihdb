@@ -50,12 +50,14 @@ pub fn try_into_size(x: u64) -> Option<usize> {
     return Some(x as usize);
 }
 
+// We could use a byteorder function for these... if we wanted to.
 pub fn encode_u64(v: &mut Vec<u8>, mut n: u64) {
-    // NOTE: Find some stdlib function to do this, maybe.
-    for _ in 0..8 {
-        v.push((n & 255) as u8);
-        n = n >> 8;
+    let mut bytes = [0u8; 8];
+    for i in 0..8 {
+        bytes[i] = (n & 255) as u8;
+        n >>= 8;
     }
+    v.extend_from_slice(&bytes);
 }
 
 pub fn decode_u64(v: &[u8], pos: &mut usize) -> Option<u64> {
@@ -72,11 +74,12 @@ pub fn decode_u64(v: &[u8], pos: &mut usize) -> Option<u64> {
 }
 
 pub fn encode_u32(v: &mut Vec<u8>, mut n: u32) {
-    // NOTE: Find some stdlib function to do this, maybe.
-    for _ in 0..4 {
-        v.push((n & 255) as u8);
-        n = n >> 8;
+    let mut bytes = [0u8; 4];
+    for i in 0..4 {
+        bytes[i] = (n & 255) as u8;
+        n >>= 8;
     }
+    v.extend_from_slice(&bytes);
 }
 
 pub fn decode_u32(v: &[u8], pos: &mut usize) -> Option<u32> {
@@ -138,6 +141,16 @@ mod tests {
         assert_eq!(Some(num), super::decode_u64(&v, &mut pos));
         assert_eq!(v.len(), pos);
         assert_eq!(8, v.len());
+
+        if num <= u32::max_value() as u64 {
+            let num = num as u32;
+            v.clear();
+            super::encode_u32(&mut v, num);
+            pos = 0;
+            assert_eq!(Some(num), super::decode_u32(&v, &mut pos));
+            assert_eq!(v.len(), pos);
+            assert_eq!(4, v.len());
+        }
     }
 
     #[test]
