@@ -22,9 +22,10 @@ impl MemStore {
         }
 
         let new_usage: usize = k_usage + disk::approx_value_usage(&val);
-        // Temporary overflow is OK because it's a usize.
-        // NOTE: Wait, is unsigned overflow OK in Rust, in debug mode?
-        self.mem_usage = (self.mem_usage + new_usage) - old_usage;
+
+        // Wrapping ops to avoid intermediate overflow -- only a concern if this
+        // one mutation is huge.
+        self.mem_usage = self.mem_usage.wrapping_add(new_usage).wrapping_sub(old_usage);
         self.entries.insert(key, val);
     }
 
