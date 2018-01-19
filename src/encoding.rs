@@ -10,11 +10,18 @@ pub fn encode_uvarint(v: &mut Vec<u8>, mut n: u64) {
     v.push(n as u8);
 }
 
-// NOTE: Protect against overflow when decoding.
 pub fn decode_uvarint(v: &[u8], pos: &mut usize) -> Option<u64> {
     let mut n: u64 = 0;
     let mut shift: u32 = 0;
-    while *pos < v.len() {
+    loop {
+        if *pos >= v.len() {
+            return None;
+        }
+        if shift == 63 {
+            // Overflow protection
+            break;
+        }
+
         let b: u8 = v[*pos];
         *pos += 1;
         n |= ((b & 127) as u64) << shift;
@@ -23,7 +30,17 @@ pub fn decode_uvarint(v: &[u8], pos: &mut usize) -> Option<u64> {
             return Some(n);
         }
     }
-    return None;
+
+    // Any 64-bit int we encode will have this byte be 1.  We'll also tolerate
+    // 0.  For a valid 64-bit varint, could also be 128 or 129, followed by a
+    // bunch of leading zeros, but we prohibit that.
+    let b: u8 = v[*pos];
+    *pos += 1;
+    if b > 1 {
+        return None;
+    }
+    n |= (b as u64) << 63;
+    return Some(n);
 }
 
 pub fn try_into_size(x: u64) -> Option<usize> {
@@ -131,5 +148,9 @@ mod tests {
         help_test_enc64(128);
         help_test_enc64(137);
         help_test_enc64(12345678);
+        // Doesn't hit overflow-checking case
+        help_test_enc64(((1u64) << 62) | 12345678);
+        // Does hit overflow-checking case
+        help_test_enc64(((1u64) << 63) | 12345678);
     }
 }
