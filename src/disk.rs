@@ -79,6 +79,38 @@ fn decode_mutation(v: &[u8], pos: &mut usize) -> Option<Mutation> {
     }
 }
 
+// NOTE: Could compress key entry lens with key len, remove key len
+
+// NOTE: Should represent mutation with set/delete bit in keys by adding 1 to value len.
+
+// NOTE: Could compress value offsets, because values are in order.
+
+// NOTE: Compaction could judiciously avoid rewriting value portion of .tab
+// files, by truncating keys off of old .tab files and having keys reference offsets
+// in different tab files.  Compression of value offset would be relative to the
+// neighboring value offset referencing the same .tab file.
+
+// Approximate estimates of disk overhead (within 1% since lengths are varint-encoded).
+pub fn approx_key_usage(key: &[u8]) -> usize {
+    return 1 // prev key entry len
+        + 1 // value len
+        + 3 // value offset
+        + 1 // key len
+        + key.len();
+}
+fn set_value_usage(val: &[u8]) -> usize {
+    return 1 // Set/delete byte
+        + 1 // val len
+        + val.len();
+}
+pub fn approx_value_usage(val: &Mutation) -> usize {
+    return match val {
+        &Mutation::Set(ref x) => set_value_usage(&x),
+        &Mutation::Delete => 1,
+    };
+}
+
+
 pub struct TableBuilder {
     values_buf: Vec<u8>,
     keys_buf: Vec<u8>,

@@ -1,6 +1,7 @@
 use error::*;
 use iter::*;
 use util::*;
+use disk;
 
 use std::collections::*;
 use std::collections::btree_map::*;
@@ -10,27 +11,17 @@ pub struct MemStore {
     pub mem_usage: usize,
 }
 
-// NOTE: Really compute overhead.
-fn key_usage(key: &[u8]) -> usize { return 8 + key.len(); }
-fn set_value_usage(val: &[u8]) -> usize { return 1 + 8 + val.len(); }
-fn value_usage(val: &Mutation) -> usize {
-    return match val {
-        &Mutation::Set(ref x) => set_value_usage(&x),
-        &Mutation::Delete => 1,
-    };
-}
-
 impl MemStore {
     pub fn apply(&mut self, key: Buf, val: Mutation) {
-        let k_usage: usize = key_usage(&key);
+        let k_usage: usize = disk::approx_key_usage(&key);
         let old_usage: usize;
         if let Some(old_value) = self.entries.get(&key) {
-            old_usage = k_usage + value_usage(&old_value);
+            old_usage = k_usage + disk::approx_value_usage(&old_value);
         } else {
             old_usage = 0;
         }
 
-        let new_usage: usize = k_usage + value_usage(&val);
+        let new_usage: usize = k_usage + disk::approx_value_usage(&val);
         // Temporary overflow is OK because it's a usize.
         // NOTE: Wait, is unsigned overflow OK in Rust, in debug mode?
         self.mem_usage = (self.mem_usage + new_usage) - old_usage;
