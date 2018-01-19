@@ -31,6 +31,14 @@ pub fn above_lower_bound(x: &[u8], bound: &Bound<Buf>) -> bool {
     }
 }
 
+pub fn ref_bound(x: &Bound<Buf>) -> Bound<&[u8]> {
+    match x {
+        &Bound::Excluded(ref b) => Bound::Excluded(b),
+        &Bound::Included(ref b) => Bound::Included(b),
+        &Bound::Unbounded => Bound::Unbounded,
+    }
+}
+
 pub fn table_filename(table_id: TableId) -> String { format!("{}.tab", table_id.0) }
 pub fn table_filepath(dir: &str, table_id: TableId) -> String { format!("{}/{}.tab", dir, table_id.0) }
 
