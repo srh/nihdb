@@ -1,5 +1,6 @@
 use error::*;
 use util::*;
+use disk::TableIterator;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
@@ -12,6 +13,8 @@ pub trait MutationIterator {
     fn step(&mut self) -> Result<()>;
 }
 
+// NOTE: Iterators should return a batch of elements so we can merge and process
+// them more efficiently.
 pub struct MergeIterator<'a> {
     // iters and iters_front are parallel arrays.
     iters: Vec<Box<MutationIterator + 'a>>,
@@ -64,11 +67,12 @@ impl<'a> MutationIterator for MergeIterator<'a> {
     fn step(&mut self) -> Result<()> {
         let frontmost: Buf = {
             let (_, key) = frontmost_front(&self).or_err("step MergeIterator too far")?;
-            key.to_vec()  // NOTE: Sigh on the copying.  _Move_ it out of iters_front.
+            key.to_vec()  // NOTE: Sigh on the copying.
         };
         for i in 0..self.iters.len() {
             if self.iters_front[i].as_ref() == Some(&frontmost) {
                 self.iters[i].step()?;
+                // NOTE: Maybe we could avoid copying here too.
                 self.iters_front[i] = self.iters[i].current_key()?.map(|x| x.to_vec());
             }
         }
@@ -76,15 +80,17 @@ impl<'a> MutationIterator for MergeIterator<'a> {
     }
 }
 
-// NOTE: Hard-code table iterator here?
 pub struct ConcatIterator<'a> {
+    // You could swap TableIterator for MutationIterator in this class and the
+    // code would still compile.  We hard-code TableIterator because we can.
+
     // (Current key, current iterator)
-    current: Option<(Buf, Box<MutationIterator>)>,
-    next_gen: Box<FnMut() -> Result<Option<Box<MutationIterator>>> + 'a>,
+    current: Option<(Buf, Box<TableIterator>)>,
+    next_gen: Box<FnMut() -> Result<Option<Box<TableIterator>>> + 'a>,
 }
 
 impl<'a> ConcatIterator<'a> {
-    pub fn make(mut next_gen: Box<FnMut() -> Result<Option<Box<MutationIterator>>> + 'a>
+    pub fn make(mut next_gen: Box<FnMut() -> Result<Option<Box<TableIterator>>> + 'a>
     ) -> Result<ConcatIterator<'a>> {
         loop {
             if let Some(current) = (*next_gen)()? {
