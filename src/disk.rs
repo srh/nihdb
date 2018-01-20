@@ -33,8 +33,6 @@ use std::rc::Rc;
 
 [keys...] format:
 
-    NOTE: This doc is not yet implemented.
-
     [entry][entry]...[entry][len][u8 length of len]
 
     with the entries in ascending order by key, the last [len] holding the byte length of the last
@@ -160,8 +158,7 @@ impl TableBuilder {
     }
 
     // Returns keys_offset, file_size, smallest key, biggest key.
-    // NOTE: Take self by value.
-    pub fn finish(&mut self, writer: &mut Write) -> Result<(u64, u64, Buf, Buf)> {
+    pub fn finish(mut self, writer: &mut Write) -> Result<(u64, u64, Buf, Buf)> {
         assert!(!self.first_key.is_none());
         let keys_offset = self.values_buf.len() as u64;
         let pre_offset = self.keys_buf.len();
