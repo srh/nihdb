@@ -12,8 +12,16 @@ use std::io::Write;
 
 /* toc file format:
 
-    [entry][entry]...[entry]
-    
+    [magic][entry][entry]...[entry]
+
+[magic] format:
+    ['N' 'I' 'H' '\0'] [u32 version]
+
+    The version identifying the file format version (so that we don't try to read old
+    version file formats).
+
+    Current version: 1
+
 [entry] format:
 
     [u64][u32][varint]
@@ -23,8 +31,9 @@ use std::io::Write;
 
 */
 
-// NOTE: Make these newtypes.
+const TOC_MAGIC: [u8; 8] = ['N' as u8, 'I' as u8, 'H' as u8, '\0' as u8, 1, 0, 0, 0];
 
+// NOTE: Make this a newtype.
 pub type LevelNumber = u64;
 
 // NOTE: We should track size of garbage data in TOC and occasionally rewrite from scratch.
@@ -59,8 +68,9 @@ fn toc_filename(dir: &str) -> String {
 }
 
 pub fn create_toc(dir: &str) -> Result<std::fs::File> {
-    let f = std::fs::File::create(toc_filename(dir))?;
-    // Nothing to write yet.
+    let mut f = std::fs::File::create(toc_filename(dir))?;
+    // Start off with version 1.  (The little-endian u32 value 01 00 00 00.)
+    f.write_all(&TOC_MAGIC)?;
     return Ok(f);
 }
 
@@ -226,13 +236,17 @@ pub fn read_toc(dir: &str) -> Result<(std::fs::File, Toc)> {
     let mut buf = Vec::<u8>::new();
     f.read_to_end(&mut buf)?;
 
+    if buf.get(0..8) != Some(&TOC_MAGIC) {
+        return mk_err("invalid toc header");
+    }
+
     let mut toc = Toc{
         table_infos: fnv::FnvHashMap::default(),
         level_infos: BTreeMap::new(),
         next_table_id: 0,
     };
 
-    let mut pos: usize = 0;
+    let mut pos: usize = TOC_MAGIC.len();
     while pos < buf.len() {
         let savepos = pos;
         if let Some(entry) = decode_entry(&buf, &mut pos) {
